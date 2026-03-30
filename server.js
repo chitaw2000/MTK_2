@@ -33,9 +33,15 @@ setupSessionAndCsrf(adminApp, {
 });
 setupSessionAndCsrf(userApp, { sessionName: 'qito_user_session_id' });
 
-// Apply API rate limiting to both apps.
-adminApp.use('/api/', apiLimiter);
-userApp.use('/api/', apiLimiter);
+// Apply API rate limiting to non-internal API routes only.
+adminApp.use('/api/', (req, res, next) => {
+    if ((req.path || '').startsWith('/internal')) return next();
+    return apiLimiter(req, res, next);
+});
+userApp.use('/api/', (req, res, next) => {
+    if ((req.path || '').startsWith('/internal')) return next();
+    return apiLimiter(req, res, next);
+});
 
 // Lock down all internal APIs with API key validation.
 adminApp.use('/api/internal', requireApiKey);

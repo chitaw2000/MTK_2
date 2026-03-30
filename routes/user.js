@@ -429,24 +429,48 @@ userApp.get('/:token.json', async (req, res) => {
     } catch (error) { res.status(500).json({ error: "System Error" }); }
 });
 
-// 🌟 SYNC USER USAGE WEBHOOK FALLBACK (DUAL ROUTE) 🌟
-userApp.post('/api/internal/sync-user-usage', async (req, res) => {
+function normalizeCandidate(value) {
+    return String(value || '').trim();
+}
+
+async function findUserForSync(payload = {}) {
+    const token = normalizeCandidate(payload.token || payload.userToken || payload.accessToken);
+    const name = normalizeCandidate(payload.name || payload.username || payload.userName || payload.user);
+
+    if (token) {
+        const byToken = await User.findOne({ token });
+        if (byToken) return byToken;
+    }
+
+    if (name) {
+        const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const byName = await User.findOne({ name: new RegExp(`^${escaped}$`, 'i') });
+        if (byName) return byName;
+    }
+
+    return null;
+}
+
+async function syncUserUsageHandler(req, res) {
     try {
-        const { name, usedGB, totalGB, expireDate } = req.body;
-        if (!name) return res.status(400).json({ error: "Missing username" });
-        const user = await User.findOne({ name: name });
+        const { usedGB, totalGB, expireDate } = req.body || {};
+        const user = await findUserForSync(req.body || {});
         if (!user) return res.status(404).json({ error: "User not found locally" });
 
-        if (usedGB !== undefined) user.usedGB = Number(usedGB);
-        if (totalGB !== undefined) user.totalGB = Number(totalGB);
+        if (usedGB !== undefined && usedGB !== null && usedGB !== '') user.usedGB = Number(usedGB);
+        if (totalGB !== undefined && totalGB !== null && totalGB !== '') user.totalGB = Number(totalGB);
         if (expireDate !== undefined) user.expireDate = expireDate;
         
         await user.save();
         return res.json({ success: true, message: "Usage synced successfully" });
     } catch (error) { res.status(500).json({ error: "Server Error" }); }
-});
+}
 
-userApp.post('/api/internal/sync-new-server', async (req, res) => {
+// 🌟 SYNC USER USAGE WEBHOOK FALLBACK (DUAL ROUTE) 🌟
+userApp.post('/api/internal/sync-user-usage', syncUserUsageHandler);
+userApp.post('/sync-user-usage', syncUserUsageHandler);
+
+async function syncNewServerHandler(req, res) {
     try {
         const apiKey = req.headers['x-api-key'];
         const { masterGroupId, newServerName, userKeys } = req.body;
@@ -471,6 +495,9 @@ userApp.post('/api/internal/sync-new-server', async (req, res) => {
         }
         return res.json({ success: true, message: `Server synced successfully for ${successCount} users` });
     } catch (error) { res.status(500).json({ error: "Server Error" }); }
-});
+}
+
+userApp.post('/api/internal/sync-new-server', syncNewServerHandler);
+userApp.post('/sync-new-server', syncNewServerHandler);
 
 module.exports = userApp;
