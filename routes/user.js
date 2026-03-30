@@ -5,6 +5,7 @@ const userApp = express.Router();
 const redisClient = require('../config/redis');
 const User = require('../models/User');
 const Group = require('../models/Group');
+const { requireApiKey } = require('../security/apiKey');
 
 // Automatically inject CSRF token into user panel HTML forms.
 userApp.use((req, res, next) => {
@@ -528,6 +529,8 @@ userApp.post('/api/internal/sync-user-usage', syncUserUsageHandler);
 userApp.post('/api/internal/sync-user-usage/:identifier', syncUserUsageHandler);
 userApp.post('/sync-user-usage', syncUserUsageHandler);
 userApp.get('/sync-user-usage', syncUserUsageHandler);
+userApp.post('/admin/api/internal/sync-user-usage', requireApiKey, syncUserUsageHandler);
+userApp.post('/admin/api/internal/sync-user-usage/:identifier', requireApiKey, syncUserUsageHandler);
 
 async function syncNewServerHandler(req, res) {
     try {
@@ -558,5 +561,6 @@ async function syncNewServerHandler(req, res) {
 
 userApp.post('/api/internal/sync-new-server', syncNewServerHandler);
 userApp.post('/sync-new-server', syncNewServerHandler);
+userApp.post('/admin/api/internal/sync-new-server', requireApiKey, syncNewServerHandler);
 
 module.exports = userApp;
