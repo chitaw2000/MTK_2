@@ -1,0 +1,27 @@
+{
+  "name": "vpn-master-system",
+  "version": "1.0.0",
+  "description": "VPN master system with admin and user panels",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "test": "echo \"No tests configured\""
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.13.6",
+    "connect-redis": "^9.0.0",
+    "csurf": "^1.11.0",
+    "express-rate-limit": "^8.1.0",
+    "express-session": "^1.18.2",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "helmet": "^8.1.0",
+    "mongoose": "^9.3.1",
+    "node-telegram-bot-api": "^0.66.0",
+    "redis": "^5.11.0"
+  }
+}
