@@ -60,7 +60,7 @@ userApp.get('/panel/api/ping/:token/:nodeName', async (req, res) => {
         const group = await Group.findOne({ name: user.groupName });
         if (!group || !group.masterIp) return res.json({ status: 'offline' });
 
-        const apiKeyHeader = process.env.PANELMASTER_API_KEY || group.masterApiKey; // 🌟 ENV PRIORITY 🌟
+        const apiKeyHeader = group.masterApiKey || process.env.PANELMASTER_API_KEY;
         const url = `${group.masterIp}/api/ping/${encodeURIComponent(nodeName)}`;
         const response = await axios.get(url, { headers: { 'x-api-key': apiKeyHeader }, timeout: 4000 });
         res.json(response.data);
@@ -347,7 +347,7 @@ userApp.post('/panel/change-server', async (req, res) => {
         const groupInfo = await Group.findOne({ name: user.groupName });
         if (!groupInfo) return res.status(404).send("Group Error");
 
-        const apiKeyHeader = process.env.PANELMASTER_API_KEY || groupInfo.masterApiKey; // 🌟 ENV PRIORITY 🌟
+        const apiKeyHeader = groupInfo.masterApiKey || process.env.PANELMASTER_API_KEY;
 
         if (!user.accessKeys || !user.accessKeys[newServer]) {
             try {
@@ -394,7 +394,7 @@ userApp.get('/:token.json', async (req, res) => {
             try {
                 const groupInfo = await Group.findOne({ name: user.groupName });
                 if (groupInfo && groupInfo.masterIp) {
-                    const apiKeyHeader = process.env.PANELMASTER_API_KEY || groupInfo.masterApiKey; // 🌟 ENV PRIORITY 🌟
+                    const apiKeyHeader = groupInfo.masterApiKey || process.env.PANELMASTER_API_KEY;
                     axios.post(groupInfo.masterIp + '/api/internal/block-user', { username: user.name }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 2000 }).catch(() => {});
                 }
             } catch (e) {}

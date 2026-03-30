@@ -1030,7 +1030,7 @@ adminApp.post('/api/fetch-master-groups', async (req, res) => {
     try { 
         let { masterIp, masterApiKey } = req.body; 
         masterIp = masterIp.replace(/\/$/, ""); 
-        const apiKeyHeader = process.env.PANELMASTER_API_KEY || masterApiKey;
+        const apiKeyHeader = masterApiKey || process.env.PANELMASTER_API_KEY;
         
         try {
             const response = await fetchWithRetry(masterIp + '/api/active-groups', null, { 
@@ -1093,7 +1093,7 @@ adminApp.post('/delete-group', async (req, res) => {
         const users = await User.find({ groupName: req.body.groupName });
         
         if (groupInfo) { 
-            const apiKeyHeader = process.env.PANELMASTER_API_KEY || groupInfo.masterApiKey;
+            const apiKeyHeader = groupInfo.masterApiKey || process.env.PANELMASTER_API_KEY;
             for (const u of users) { 
                 try { 
                     await fetchWithRetry(groupInfo.masterIp + '/api/internal/delete-user', { username: u.name, token: u.token }, { headers: { 'x-api-key': apiKeyHeader } }); 
@@ -1385,7 +1385,7 @@ adminApp.post('/edit-user', async (req, res) => {
             try {
                 const groupInfo = await Group.findOne({ name: groupName });
                 if (groupInfo && groupInfo.masterIp) {
-                    const apiKeyHeader = process.env.PANELMASTER_API_KEY || groupInfo.masterApiKey;
+                    const apiKeyHeader = groupInfo.masterApiKey || process.env.PANELMASTER_API_KEY;
                     await fetchWithRetry(groupInfo.masterIp + '/api/internal/edit-user', {
                         username: user.name, 
                         totalGB: user.totalGB, 
@@ -1407,7 +1407,7 @@ adminApp.post('/sync-group-nodes', async (req, res) => {
         const groupInfo = await Group.findOne({ name: groupName });
         if (!groupInfo || !groupInfo.masterIp) return res.redirect('/admin');
 
-        const apiKeyHeader = process.env.PANELMASTER_API_KEY || groupInfo.masterApiKey; 
+        const apiKeyHeader = groupInfo.masterApiKey || process.env.PANELMASTER_API_KEY; 
         const users = await User.find({ groupName: groupName });
         const batchSize = 5;
         
@@ -1453,7 +1453,7 @@ adminApp.post('/add-user', async (req, res) => {
         const groupInfo = await Group.findOne({ name: groupName });
         if(!groupInfo || !groupInfo.masterIp) return res.status(400).send("Invalid Group Setup");
 
-        const apiKeyHeader = process.env.PANELMASTER_API_KEY || groupInfo.masterApiKey; 
+        const apiKeyHeader = groupInfo.masterApiKey || process.env.PANELMASTER_API_KEY; 
         const lastUser = await User.findOne({ groupName: groupName }).sort({ userNo: -1 });
         const nextNo = (lastUser && lastUser.userNo) ? lastUser.userNo + 1 : 1;
 
@@ -1487,7 +1487,7 @@ adminApp.post('/delete-user', async (req, res) => {
         const groupInfo = await Group.findOne({ name: req.body.groupName });
         const user = await User.findOne({ token: token });
         if (groupInfo && user) {
-            const apiKeyHeader = process.env.PANELMASTER_API_KEY || groupInfo.masterApiKey; 
+            const apiKeyHeader = groupInfo.masterApiKey || process.env.PANELMASTER_API_KEY; 
             try { 
                 await fetchWithRetry(groupInfo.masterIp + '/api/internal/delete-user', { username: user.name, token: token }, { headers: { 'x-api-key': apiKeyHeader } }); 
             } catch(e) {}
