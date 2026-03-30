@@ -335,6 +335,15 @@ async function fetchWithRetry(url, data, config, retries = 3, delay = 1000) {
     }
 }
 
+function normalizeMasterBaseUrl(value) {
+    let url = String(value || '').trim();
+    if (!url) return '';
+    if (!/^https?:\/\//i.test(url)) {
+        url = `https://${url}`;
+    }
+    return url.replace(/\/$/, '');
+}
+
 
 // ==========================================
 // 🌟 Common UI Components
@@ -1029,7 +1038,7 @@ adminApp.post('/api/restore-upload', async (req, res) => {
 adminApp.post('/api/fetch-master-groups', async (req, res) => {
     try { 
         let { masterIp, masterApiKey } = req.body; 
-        masterIp = masterIp.replace(/\/$/, ""); 
+        masterIp = normalizeMasterBaseUrl(masterIp);
         const apiKeyHeader = masterApiKey || process.env.PANELMASTER_API_KEY;
         
         try {
@@ -1052,7 +1061,8 @@ adminApp.post('/api/fetch-master-groups', async (req, res) => {
 adminApp.post('/add-master', async (req, res) => { 
     try { 
         let { name, ip, apiKey } = req.body; 
-        ip = ip.replace(/\/$/, ""); 
+        ip = normalizeMasterBaseUrl(ip);
+        if (!ip) return res.status(400).send("Invalid master URL");
         await Master.create({ name, ip, apiKey }); 
         res.redirect('/admin'); 
     } catch (e) { 
@@ -1078,7 +1088,7 @@ adminApp.post('/create-group', async (req, res) => {
     try {
         const { groupName, masterGroupId, nsRecord, masterIp, masterApiKey, masterName } = req.body;
         if (groupName && masterGroupId && nsRecord && masterIp && masterApiKey) { 
-            let cleanIp = masterIp.replace(/\/$/, ""); 
+            let cleanIp = normalizeMasterBaseUrl(masterIp);
             await Group.create({ name: groupName, masterGroupId, nsRecord, masterIp: cleanIp, masterApiKey, masterName: masterName || "1" }); 
         }
         res.redirect('/admin');
