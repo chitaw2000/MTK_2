@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const Master = require('../models/Master');
+const Group = require('../models/Group');
 
 // Generate a secure API Key and its Hash
 function createApiKey() {
@@ -27,9 +28,10 @@ async function requireApiKey(req, res, next) {
     // Assume you have an ApiKey model (You will need to create this Mongoose model)
     // const validKeyRecord = await ApiKey.findOne({ hashedKey: hashedProvided, status: 'active' });
     
-    const validMaster = await Master.findOne({ apiKey: providedKey }); // Or Hash check based on your DB setup
+    const validMaster = await Master.findOne({ apiKey: providedKey });
+    const validGroup = await Group.findOne({ masterApiKey: providedKey });
 
-    if (!validMaster) {
+    if (!validMaster && !validGroup) {
         // Audit Log here
         console.error(`🚨 ALERT: Unauthorized API Access Attempt with invalid key from IP: ${req.ip}`);
         return res.status(401).json({ success: false, error: "Invalid or Revoked API Key" });

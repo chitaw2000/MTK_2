@@ -1260,7 +1260,7 @@ adminApp.get('/group/:name', async (req, res) => {
                                 <i class="fas fa-download mr-2"></i> Download Backup
                             </button>
                         </form>
-                        <form action="/admin/sync-group-nodes" method="POST" class="m-0" onsubmit="this.querySelector('button').innerHTML='<i class=\\'fas fa-spinner fa-spin mr-2\\'></i> Syncing...';">
+                        <form action="/admin/sync-group-nodes" method="POST" class="m-0" onsubmit="this.querySelector('button').textContent='Syncing...';">
                             <input type="hidden" name="groupName" value="${groupName}">
                             <button type="submit" class="bg-indigo-600 text-white hover:bg-indigo-700 px-4 py-2 rounded-xl text-sm font-bold transition shadow-[0_4px_14px_rgba(79,70,229,0.3)] active:scale-95 flex items-center">
                                 <i class="fas fa-sync-alt mr-2"></i> Sync Nodes
