@@ -173,12 +173,11 @@ adminApp.post('/login', async (req, res) => {
                     return res.redirect('/admin/verify-otp');
                     
                 } catch(e) {
-                    // 🌟 EMERGENCY BYPASS IF BOT FAILS
-                    req.session.isAdmin = true;
+                    // Strict mode: do not bypass login when OTP sending fails.
                     return res.send(`
                         <script>
-                            alert('⚠️ Telegram OTP ပို့ရန် အခက်အခဲရှိနေပါသည်။\\n(Bot Token သို့မဟုတ် Chat ID မှားယွင်းနေပါသည်)\\n\\nအရေးပေါ် ဝင်ခွင့်ပြုလိုက်ပါသည်။ ကျေးဇူးပြု၍ Settings တွင် Bot အချက်အလက်များကို ပြင်ဆင်ပါ။'); 
-                            window.location.href='/admin/settings';
+                            alert('❌ Telegram OTP ပို့ရန် အခက်အခဲရှိနေပါသည်။\\nBot Token / Chat ID ကို ပြန်စစ်ပြီး ထပ်မံကြိုးစားပါ။');
+                            window.location.href='/admin/login';
                         </script>
                     `);
                 }
