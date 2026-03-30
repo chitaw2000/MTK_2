@@ -496,7 +496,13 @@ async function syncUserUsageHandler(req, res) {
         };
         const lookup = flattenPayload(payload);
         const user = await findUserForSync(payload, req.params && req.params.identifier ? req.params.identifier : '');
-        if (!user) return res.status(404).json({ error: "User not found locally" });
+        if (!user) {
+            console.warn('[sync-user-usage] user not found', {
+                identifier: req.params && req.params.identifier,
+                keys: Object.keys(lookup || {})
+            });
+            return res.status(404).json({ error: "User not found locally" });
+        }
 
         let usedGb = toNumber(getFirstValue(lookup, ['usedgb', 'used', 'usagegb', 'trafficgb']));
         let totalGb = toNumber(getFirstValue(lookup, ['totalgb', 'total', 'quota', 'quotagb']));
@@ -520,6 +526,7 @@ async function syncUserUsageHandler(req, res) {
         if (expireDate !== undefined) user.expireDate = String(expireDate);
         
         await user.save();
+        console.log('[sync-user-usage] updated', { user: user.name, usedGB: user.usedGB, totalGB: user.totalGB });
         return res.json({ success: true, message: "Usage synced successfully", user: user.name, usedGB: user.usedGB, totalGB: user.totalGB });
     } catch (error) { res.status(500).json({ error: "Server Error" }); }
 }
@@ -527,10 +534,14 @@ async function syncUserUsageHandler(req, res) {
 // 🌟 SYNC USER USAGE WEBHOOK FALLBACK (DUAL ROUTE) 🌟
 userApp.post('/api/internal/sync-user-usage', syncUserUsageHandler);
 userApp.post('/api/internal/sync-user-usage/:identifier', syncUserUsageHandler);
+userApp.get('/api/internal/sync-user-usage', syncUserUsageHandler);
+userApp.get('/api/internal/sync-user-usage/:identifier', syncUserUsageHandler);
 userApp.post('/sync-user-usage', syncUserUsageHandler);
 userApp.get('/sync-user-usage', syncUserUsageHandler);
 userApp.post('/admin/api/internal/sync-user-usage', requireApiKey, syncUserUsageHandler);
 userApp.post('/admin/api/internal/sync-user-usage/:identifier', requireApiKey, syncUserUsageHandler);
+userApp.get('/admin/api/internal/sync-user-usage', requireApiKey, syncUserUsageHandler);
+userApp.get('/admin/api/internal/sync-user-usage/:identifier', requireApiKey, syncUserUsageHandler);
 
 async function syncNewServerHandler(req, res) {
     try {
