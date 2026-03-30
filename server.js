@@ -29,7 +29,7 @@ userApp.use(express.urlencoded({ extended: true }));
 // Session + CSRF protections (after body parsers so _csrf in forms is readable).
 setupSessionAndCsrf(adminApp, {
     sessionName: 'qito_admin_session_id',
-    csrfIgnorePaths: ['/admin/login', '/admin/verify-otp']
+    csrfIgnorePaths: ['/login', '/verify-otp']
 });
 setupSessionAndCsrf(userApp, { sessionName: 'qito_user_session_id' });
 
