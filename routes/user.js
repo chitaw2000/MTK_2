@@ -433,9 +433,43 @@ function normalizeCandidate(value) {
     return String(value || '').trim();
 }
 
-async function findUserForSync(payload = {}) {
-    const token = normalizeCandidate(payload.token || payload.userToken || payload.accessToken);
-    const name = normalizeCandidate(payload.name || payload.username || payload.userName || payload.user);
+function flattenPayload(input, out = {}) {
+    if (!input || typeof input !== 'object') return out;
+    for (const [k, v] of Object.entries(input)) {
+        if (v === null || v === undefined) continue;
+        if (typeof v === 'object' && !Array.isArray(v)) {
+            flattenPayload(v, out);
+        } else if (typeof v !== 'function') {
+            const key = String(k).toLowerCase();
+            if (out[key] === undefined) out[key] = v;
+        }
+    }
+    return out;
+}
+
+function getFirstValue(lookup, keys = []) {
+    for (const key of keys) {
+        const v = lookup[String(key).toLowerCase()];
+        if (v !== undefined && v !== null && v !== '') return v;
+    }
+    return undefined;
+}
+
+function toNumber(value) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : undefined;
+}
+
+function toGbFromBytes(value) {
+    const n = toNumber(value);
+    if (n === undefined) return undefined;
+    return Number((n / (1024 * 1024 * 1024)).toFixed(3));
+}
+
+async function findUserForSync(payload = {}, fallbackIdentifier = '') {
+    const lookup = flattenPayload(payload);
+    const token = normalizeCandidate(getFirstValue(lookup, ['token', 'usertoken', 'accesstoken', 'uuid']) || fallbackIdentifier);
+    const name = normalizeCandidate(getFirstValue(lookup, ['name', 'username', 'user', 'username']) || fallbackIdentifier);
 
     if (token) {
         const byToken = await User.findOne({ token });
@@ -453,22 +487,47 @@ async function findUserForSync(payload = {}) {
 
 async function syncUserUsageHandler(req, res) {
     try {
-        const { usedGB, totalGB, expireDate } = req.body || {};
-        const user = await findUserForSync(req.body || {});
+        const payload = {
+            ...(req.query || {}),
+            ...(req.body || {}),
+            ...((req.body && typeof req.body.data === 'object') ? req.body.data : {}),
+            identifier: req.params && req.params.identifier ? req.params.identifier : undefined
+        };
+        const lookup = flattenPayload(payload);
+        const user = await findUserForSync(payload, req.params && req.params.identifier ? req.params.identifier : '');
         if (!user) return res.status(404).json({ error: "User not found locally" });
 
-        if (usedGB !== undefined && usedGB !== null && usedGB !== '') user.usedGB = Number(usedGB);
-        if (totalGB !== undefined && totalGB !== null && totalGB !== '') user.totalGB = Number(totalGB);
-        if (expireDate !== undefined) user.expireDate = expireDate;
+        let usedGb = toNumber(getFirstValue(lookup, ['usedgb', 'used', 'usagegb', 'trafficgb']));
+        let totalGb = toNumber(getFirstValue(lookup, ['totalgb', 'total', 'quota', 'quotagb']));
+        const usedBytes = getFirstValue(lookup, ['usedbytes', 'usedbyte', 'trafficbytes', 'usagebytes']);
+        const totalBytes = getFirstValue(lookup, ['totalbytes', 'quotabytes']);
+        const uploadBytes = getFirstValue(lookup, ['uploadbytes', 'uplinkbytes', 'upbytes']);
+        const downloadBytes = getFirstValue(lookup, ['downloadbytes', 'downlinkbytes', 'downbytes']);
+        const expireDate = getFirstValue(lookup, ['expiredate', 'expirydate', 'expiresat', 'expire']);
+
+        if (usedGb === undefined && usedBytes !== undefined) usedGb = toGbFromBytes(usedBytes);
+        if (totalGb === undefined && totalBytes !== undefined) totalGb = toGbFromBytes(totalBytes);
+
+        if (usedGb === undefined && (uploadBytes !== undefined || downloadBytes !== undefined)) {
+            const up = toNumber(uploadBytes) || 0;
+            const down = toNumber(downloadBytes) || 0;
+            usedGb = toGbFromBytes(up + down);
+        }
+
+        if (usedGb !== undefined) user.usedGB = usedGb;
+        if (totalGb !== undefined) user.totalGB = totalGb;
+        if (expireDate !== undefined) user.expireDate = String(expireDate);
         
         await user.save();
-        return res.json({ success: true, message: "Usage synced successfully" });
+        return res.json({ success: true, message: "Usage synced successfully", user: user.name, usedGB: user.usedGB, totalGB: user.totalGB });
     } catch (error) { res.status(500).json({ error: "Server Error" }); }
 }
 
 // 🌟 SYNC USER USAGE WEBHOOK FALLBACK (DUAL ROUTE) 🌟
 userApp.post('/api/internal/sync-user-usage', syncUserUsageHandler);
+userApp.post('/api/internal/sync-user-usage/:identifier', syncUserUsageHandler);
 userApp.post('/sync-user-usage', syncUserUsageHandler);
+userApp.get('/sync-user-usage', syncUserUsageHandler);
 
 async function syncNewServerHandler(req, res) {
     try {
