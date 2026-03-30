@@ -6,6 +6,14 @@ const fs = require('fs');
 const path = require('path');
 const adminApp = express.Router();
 
+// Avoid stale admin HTML/JS behind proxies/CDN caches.
+adminApp.use((req, res, next) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    next();
+});
+
 // Automatically inject CSRF token into all rendered HTML forms.
 adminApp.use((req, res, next) => {
     if (typeof req.csrfToken !== 'function') return next();
