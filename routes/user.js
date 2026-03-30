@@ -461,29 +461,33 @@ function toNumber(value) {
     return Number.isFinite(n) ? n : undefined;
 }
 
+function parseStrictNumber(value) {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string') {
+        const s = value.trim();
+        if (/^-?\d+(\.\d+)?$/.test(s)) return Number(s);
+    }
+    return undefined;
+}
+
+function makeBadRequest(message) {
+    const err = new Error(message);
+    err.statusCode = 400;
+    return err;
+}
+
+function readStrictNumericField(lookup, aliases, label) {
+    const raw = getFirstValue(lookup, aliases);
+    if (raw === undefined) return undefined;
+    const parsed = parseStrictNumber(raw);
+    if (parsed === undefined) throw makeBadRequest(`Invalid ${label}: numeric value required`);
+    return parsed;
+}
+
 function toGbFromBytes(value) {
     const n = toNumber(value);
     if (n === undefined) return undefined;
     return Number((n / (1024 * 1024 * 1024)).toFixed(3));
-}
-
-async function findUserForSync(payload = {}, fallbackIdentifier = '') {
-    const lookup = flattenPayload(payload);
-    const token = normalizeCandidate(getFirstValue(lookup, ['token', 'usertoken', 'accesstoken', 'uuid']) || fallbackIdentifier);
-    const name = normalizeCandidate(getFirstValue(lookup, ['name', 'username', 'user', 'username']) || fallbackIdentifier);
-
-    if (token) {
-        const byToken = await User.findOne({ token });
-        if (byToken) return byToken;
-    }
-
-    if (name) {
-        const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const byName = await User.findOne({ name: new RegExp(`^${escaped}$`, 'i') });
-        if (byName) return byName;
-    }
-
-    return null;
 }
 
 async function syncUserUsageHandler(req, res) {
@@ -495,22 +499,39 @@ async function syncUserUsageHandler(req, res) {
             identifier: req.params && req.params.identifier ? req.params.identifier : undefined
         };
         const lookup = flattenPayload(payload);
-        const user = await findUserForSync(payload, req.params && req.params.identifier ? req.params.identifier : '');
+        const fallbackIdentifier = req.params && req.params.identifier ? req.params.identifier : '';
+        const token = normalizeCandidate(getFirstValue(lookup, ['token', 'usertoken', 'accesstoken', 'uuid']) || fallbackIdentifier);
+        const name = normalizeCandidate(getFirstValue(lookup, ['name', 'username', 'user', 'username']) || fallbackIdentifier);
+
+        if (!token && !name) {
+            throw makeBadRequest('Invalid payload: token or name is required');
+        }
+
+        let user = null;
+        if (token) {
+            user = await User.findOne({ token });
+        }
+        if (!user && name) {
+            user = await User.findOne({ name });
+        }
+
         if (!user) {
             console.warn('[sync-user-usage] user not found', {
                 identifier: req.params && req.params.identifier,
                 keys: Object.keys(lookup || {})
             });
-            return res.status(404).json({ error: "User not found locally" });
+            return res.status(404).json({ success: false, error: "User not found locally" });
         }
 
-        let usedGb = toNumber(getFirstValue(lookup, ['usedgb', 'used', 'usagegb', 'trafficgb']));
-        let totalGb = toNumber(getFirstValue(lookup, ['totalgb', 'total', 'quota', 'quotagb']));
-        const usedBytes = getFirstValue(lookup, ['usedbytes', 'usedbyte', 'trafficbytes', 'usagebytes']);
-        const totalBytes = getFirstValue(lookup, ['totalbytes', 'quotabytes']);
-        const uploadBytes = getFirstValue(lookup, ['uploadbytes', 'uplinkbytes', 'upbytes']);
-        const downloadBytes = getFirstValue(lookup, ['downloadbytes', 'downlinkbytes', 'downbytes']);
+        let usedGb = readStrictNumericField(lookup, ['usedgb', 'used', 'usagegb', 'trafficgb'], 'usedGB');
+        let totalGb = readStrictNumericField(lookup, ['totalgb', 'total', 'quota', 'quotagb'], 'totalGB');
+        const remainingGb = readStrictNumericField(lookup, ['remaininggb', 'remaining', 'leftgb'], 'remainingGB');
+        const usedBytes = readStrictNumericField(lookup, ['usedbytes', 'usedbyte', 'trafficbytes', 'usagebytes'], 'usedBytes');
+        const totalBytes = readStrictNumericField(lookup, ['totalbytes', 'quotabytes'], 'totalBytes');
+        const uploadBytes = readStrictNumericField(lookup, ['uploadbytes', 'uplinkbytes', 'upbytes'], 'uploadBytes');
+        const downloadBytes = readStrictNumericField(lookup, ['downloadbytes', 'downlinkbytes', 'downbytes'], 'downloadBytes');
         const expireDate = getFirstValue(lookup, ['expiredate', 'expirydate', 'expiresat', 'expire']);
+        const isBlockedRaw = getFirstValue(lookup, ['isblocked', 'blocked']);
 
         if (usedGb === undefined && usedBytes !== undefined) usedGb = toGbFromBytes(usedBytes);
         if (totalGb === undefined && totalBytes !== undefined) totalGb = toGbFromBytes(totalBytes);
@@ -521,14 +542,30 @@ async function syncUserUsageHandler(req, res) {
             usedGb = toGbFromBytes(up + down);
         }
 
+        if (usedGb === undefined && remainingGb !== undefined && totalGb !== undefined) {
+            usedGb = Number((totalGb - remainingGb).toFixed(3));
+        }
+
+        if (isBlockedRaw !== undefined && !['true', 'false', '1', '0'].includes(String(isBlockedRaw).toLowerCase())) {
+            throw makeBadRequest('Invalid isBlocked: boolean value required');
+        }
+
+        if (expireDate !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(String(expireDate))) {
+            throw makeBadRequest('Invalid expireDate: expected YYYY-MM-DD');
+        }
+
         if (usedGb !== undefined) user.usedGB = usedGb;
         if (totalGb !== undefined) user.totalGB = totalGb;
         if (expireDate !== undefined) user.expireDate = String(expireDate);
         
         await user.save();
         console.log('[sync-user-usage] updated', { user: user.name, usedGB: user.usedGB, totalGB: user.totalGB });
-        return res.json({ success: true, message: "Usage synced successfully", user: user.name, usedGB: user.usedGB, totalGB: user.totalGB });
-    } catch (error) { res.status(500).json({ error: "Server Error" }); }
+        return res.json({ success: true, message: "Usage synced successfully" });
+    } catch (error) {
+        const status = error && error.statusCode ? error.statusCode : 500;
+        const message = status === 500 ? "Server Error" : error.message;
+        return res.status(status).json({ success: false, error: message });
+    }
 }
 
 // 🌟 SYNC USER USAGE WEBHOOK FALLBACK (DUAL ROUTE) 🌟
