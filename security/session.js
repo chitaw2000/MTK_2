@@ -47,8 +47,11 @@ module.exports = function setupSessionAndCsrf(app, options = {}) {
     // 3. CSRF Protection (Except for API routes which use x-api-key)
     const csrfProtection = csrf({ cookie: false }); 
     app.use((req, res, next) => {
-        if (req.path.startsWith('/api/') || csrfIgnorePaths.has(req.path)) {
-            next(); // Skip CSRF for API
+        const path = req.path || '';
+        const isApiLikePath = path.startsWith('/api/') || path.includes('/api/');
+
+        if (isApiLikePath || csrfIgnorePaths.has(path)) {
+            next(); // Skip CSRF for API-style routes (including /admin/api/*).
         } else {
             csrfProtection(req, res, next);
         }
