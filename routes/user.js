@@ -67,6 +67,32 @@ userApp.get('/panel/api/ping/:token/:nodeName', async (req, res) => {
     } catch (error) { res.json({ status: 'offline' }); }
 });
 
+// Friendly landing for /panel without token.
+userApp.get('/panel', (req, res) => {
+    res.status(400).send(`
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+            <title>Panel Link Required</title>
+            <script src="https://cdn.tailwindcss.com"></script>
+        </head>
+        <body class="bg-slate-950 text-slate-100 min-h-screen flex items-center justify-center p-4">
+            <div class="max-w-lg w-full bg-slate-900 border border-slate-800 rounded-2xl p-6">
+                <h1 class="text-xl font-bold mb-3">Panel token လိုအပ်ပါတယ်</h1>
+                <p class="text-slate-300 mb-4">
+                    ဒီ page ကို အသုံးပြုရန် valid token ပါတဲ့ link နဲ့ဝင်ရပါတယ်။
+                </p>
+                <div class="bg-slate-800 rounded-xl p-3 font-mono text-sm break-all">
+                    https://${req.hostname}/panel/&lt;your-token&gt;
+                </div>
+            </div>
+        </body>
+        </html>
+    `);
+});
+
 // 🌟 USER WEB PANEL
 userApp.get('/panel/:token', async (req, res) => {
     try {

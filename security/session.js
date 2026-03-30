@@ -6,6 +6,7 @@ const redisClient = require('../config/redis');
 
 module.exports = function setupSessionAndCsrf(app, options = {}) {
     const sessionName = options.sessionName || 'qito_session_id';
+    const csrfIgnorePaths = new Set(options.csrfIgnorePaths || []);
     const sessionSecret = process.env.SESSION_SECRET;
 
     if (!sessionSecret) {
@@ -21,6 +22,7 @@ module.exports = function setupSessionAndCsrf(app, options = {}) {
         secret: sessionSecret || 'dev-only-session-secret',
         resave: false,
         saveUninitialized: false,
+        proxy: true,
         name: sessionName, // Use per-app session cookie name
         cookie: {
             httpOnly: true,
@@ -45,7 +47,7 @@ module.exports = function setupSessionAndCsrf(app, options = {}) {
     // 3. CSRF Protection (Except for API routes which use x-api-key)
     const csrfProtection = csrf({ cookie: false }); 
     app.use((req, res, next) => {
-        if (req.path.startsWith('/api/')) {
+        if (req.path.startsWith('/api/') || csrfIgnorePaths.has(req.path)) {
             next(); // Skip CSRF for API
         } else {
             csrfProtection(req, res, next);

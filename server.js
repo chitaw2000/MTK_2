@@ -13,18 +13,25 @@ const userRoutes = require('./routes/user');
 const adminApp = express();
 const userApp = express();
 
+// Trust reverse proxy (Nginx) so secure cookies work on HTTPS.
+adminApp.set('trust proxy', 1);
+userApp.set('trust proxy', 1);
+
 // Apply security headers to both active apps.
 setupSecurityHeaders(adminApp);
 setupSecurityHeaders(userApp);
-
-// Admin dashboard needs session + CSRF protections.
-setupSessionAndCsrf(adminApp, { sessionName: 'qito_admin_session_id' });
-setupSessionAndCsrf(userApp, { sessionName: 'qito_user_session_id' });
 
 adminApp.use(express.json());
 adminApp.use(express.urlencoded({ extended: true }));
 userApp.use(express.json());
 userApp.use(express.urlencoded({ extended: true }));
+
+// Session + CSRF protections (after body parsers so _csrf in forms is readable).
+setupSessionAndCsrf(adminApp, {
+    sessionName: 'qito_admin_session_id',
+    csrfIgnorePaths: ['/admin/login', '/admin/verify-otp']
+});
+setupSessionAndCsrf(userApp, { sessionName: 'qito_user_session_id' });
 
 // Apply API rate limiting to both apps.
 adminApp.use('/api/', apiLimiter);
