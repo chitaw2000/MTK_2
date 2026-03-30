@@ -639,11 +639,19 @@ adminApp.get('/', async (req, res) => {
                     btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Fetching...';
                     
                     try {
+                        const controller = new AbortController();
+                        const timeoutId = setTimeout(() => controller.abort(), 12000);
                         const res = await fetch('/admin/api/fetch-master-groups', { 
                             method: 'POST', 
-                            headers: { 'Content-Type': 'application/json' }, 
+                            headers: { 'Content-Type': 'application/json' },
+                            signal: controller.signal,
                             body: JSON.stringify({ masterIp: ip, masterApiKey: key }) 
                         });
+                        clearTimeout(timeoutId);
+
+                        if (!res.ok) {
+                            throw new Error('Server returned ' + res.status);
+                        }
                         const data = await res.json();
                         
                         if(data.success) {
@@ -669,11 +677,14 @@ adminApp.get('/', async (req, res) => {
                             }, 2000);
                         } else { 
                             alert("Failed: " + data.error); 
-                            btn.innerHTML = '<i class="fas fa-sync-alt mr-2"></i> Fetch Groups'; 
                         }
                     } catch(e) { 
-                        alert("Network Error!"); 
-                        btn.innerHTML = '<i class="fas fa-sync-alt mr-2"></i> Fetch Groups'; 
+                        const msg = e && e.name === 'AbortError' ? "Request timeout. Check Master URL / API Key and network." : (e.message || "Network Error!");
+                        alert("Failed: " + msg);
+                    } finally {
+                        if (!btn.innerHTML.includes('Connected!')) {
+                            btn.innerHTML = '<i class="fas fa-sync-alt mr-2"></i> Fetch Groups';
+                        }
                     }
                 }
 
@@ -1044,12 +1055,12 @@ adminApp.post('/api/fetch-master-groups', async (req, res) => {
         try {
             const response = await fetchWithRetry(masterIp + '/api/active-groups', null, { 
                 method: 'get', headers: { 'x-api-key': apiKeyHeader }, timeout: 5000 
-            });
+            }, 1, 500);
             if (response.data && response.data.groups) return res.json({ success: true, groups: response.data.groups }); 
         } catch (getErr) {
             const responsePost = await fetchWithRetry(masterIp + '/api/active-groups', {}, { 
                 method: 'post', headers: { 'x-api-key': apiKeyHeader }, timeout: 5000 
-            });
+            }, 1, 500);
             if (responsePost.data && responsePost.data.groups) return res.json({ success: true, groups: responsePost.data.groups }); 
             else throw new Error("Invalid API");
         }
