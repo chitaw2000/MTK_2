@@ -9,6 +9,7 @@ module.exports = function setupSecurityHeaders(app) {
             directives: {
                 defaultSrc: ["'self'"],
                 scriptSrc: ["'self'", "'unsafe-inline'", "https://cdn.tailwindcss.com", "https://cdnjs.cloudflare.com"],
+                scriptSrcAttr: ["'unsafe-inline'"],
                 styleSrc: ["'self'", "'unsafe-inline'", "https://cdnjs.cloudflare.com"],
                 imgSrc: ["'self'", "data:", "https://i.postimg.cc"],
                 connectSrc: ["'self'"],
