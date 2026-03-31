@@ -6,6 +6,8 @@ const userSchema = new mongoose.Schema({
     groupName: String,
     totalGB: Number,
     usedGB: Number,
+    remainingGB: Number,
+    isBlocked: { type: Boolean, default: false },
     currentServer: String,
     expireDate: String,
     accessKeys: Object,

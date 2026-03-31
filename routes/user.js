@@ -476,6 +476,20 @@ function makeBadRequest(message) {
     return err;
 }
 
+function parseBoolean(value) {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') {
+        if (value === 1) return true;
+        if (value === 0) return false;
+    }
+    if (typeof value === 'string') {
+        const s = value.trim().toLowerCase();
+        if (s === 'true' || s === '1') return true;
+        if (s === 'false' || s === '0') return false;
+    }
+    return undefined;
+}
+
 function readStrictNumericField(lookup, aliases, label) {
     const raw = getFirstValue(lookup, aliases);
     if (raw === undefined) return undefined;
@@ -503,8 +517,8 @@ async function syncUserUsageHandler(req, res) {
         const token = normalizeCandidate(getFirstValue(lookup, ['token', 'usertoken', 'accesstoken', 'uuid']) || fallbackIdentifier);
         const name = normalizeCandidate(getFirstValue(lookup, ['name', 'username', 'user', 'username']) || fallbackIdentifier);
 
-        if (!token && !name) {
-            throw makeBadRequest('Invalid payload: token or name is required');
+        if (!name) {
+            throw makeBadRequest('Invalid payload: name is required');
         }
 
         let user = null;
@@ -546,7 +560,12 @@ async function syncUserUsageHandler(req, res) {
             usedGb = Number((totalGb - remainingGb).toFixed(3));
         }
 
-        if (isBlockedRaw !== undefined && !['true', 'false', '1', '0'].includes(String(isBlockedRaw).toLowerCase())) {
+        if (usedGb === undefined) {
+            throw makeBadRequest('Invalid usedGB: numeric value required');
+        }
+
+        const parsedBlocked = parseBoolean(isBlockedRaw);
+        if (isBlockedRaw !== undefined && parsedBlocked === undefined) {
             throw makeBadRequest('Invalid isBlocked: boolean value required');
         }
 
@@ -556,6 +575,8 @@ async function syncUserUsageHandler(req, res) {
 
         if (usedGb !== undefined) user.usedGB = usedGb;
         if (totalGb !== undefined) user.totalGB = totalGb;
+        if (remainingGb !== undefined) user.remainingGB = remainingGb;
+        if (parsedBlocked !== undefined) user.isBlocked = parsedBlocked;
         if (expireDate !== undefined) user.expireDate = String(expireDate);
         
         await user.save();
