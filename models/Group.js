@@ -6,7 +6,8 @@ const groupSchema = new mongoose.Schema({
     nsRecord: { type: String, required: true },
     masterIp: { type: String, required: true },
     masterApiKey: { type: String, required: true },
-    masterName: { type: String, default: "1" } // 🌟 API နံပါတ် မှတ်ရန် အသစ်
+    masterName: { type: String, default: "1" }, // 🌟 API နံပါတ် မှတ်ရန် အသစ်
+    panelLabel: { type: String, default: "Premium" }
 });
 
 module.exports = mongoose.model('Group', groupSchema);

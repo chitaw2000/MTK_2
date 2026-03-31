@@ -579,7 +579,7 @@ adminApp.get('/', async (req, res) => {
                         </div>
                     </div>
 
-                    <form action="/admin/create-group" method="POST" class="grid grid-cols-1 md:grid-cols-4 gap-5">
+                    <form action="/admin/create-group" method="POST" class="grid grid-cols-1 md:grid-cols-5 gap-5">
                         <input type="hidden" name="masterIp" id="formMasterIp">
                         <input type="hidden" name="masterApiKey" id="formMasterApiKey">
                         <input type="hidden" name="masterName" id="formMasterName">
@@ -597,6 +597,10 @@ adminApp.get('/', async (req, res) => {
                         <div>
                             <label class="block text-[11px] font-black text-slate-400 mb-2 uppercase tracking-widest">3. Custom DNS</label>
                             <input type="text" name="nsRecord" placeholder="e.g. ns1.domain.com" required class="w-full border-2 border-slate-200 p-4 rounded-2xl outline-none focus:border-indigo-500 font-bold text-indigo-700 transition">
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-black text-slate-400 mb-2 uppercase tracking-widest">4. Panel Badge</label>
+                            <input type="text" name="panelLabel" placeholder="e.g. Premium, VIP, Gold" class="w-full border-2 border-slate-200 p-4 rounded-2xl outline-none focus:border-indigo-500 font-bold text-slate-800 transition">
                         </div>
                         <div class="flex items-end">
                             <button type="submit" class="w-full bg-slate-800 text-white px-6 py-4 rounded-2xl font-bold hover:bg-black transition shadow-md active:scale-[0.98]">
@@ -1105,14 +1109,33 @@ adminApp.post('/delete-all-masters', async (req, res) => {
 
 adminApp.post('/create-group', async (req, res) => {
     try {
-        const { groupName, masterGroupId, nsRecord, masterIp, masterApiKey, masterName } = req.body;
+        const { groupName, masterGroupId, nsRecord, masterIp, masterApiKey, masterName, panelLabel } = req.body;
         if (groupName && masterGroupId && nsRecord && masterIp && masterApiKey) { 
             let cleanIp = normalizeMasterBaseUrl(masterIp);
-            await Group.create({ name: groupName, masterGroupId, nsRecord, masterIp: cleanIp, masterApiKey, masterName: masterName || "1" }); 
+            await Group.create({
+                name: groupName,
+                masterGroupId,
+                nsRecord,
+                masterIp: cleanIp,
+                masterApiKey,
+                masterName: masterName || "1",
+                panelLabel: (panelLabel || 'Premium').toString().trim() || 'Premium'
+            });
         }
         res.redirect('/admin');
     } catch (error) { 
         res.status(500).send("Error creating group"); 
+    }
+});
+
+adminApp.post('/update-group-panel-label', async (req, res) => {
+    try {
+        const groupName = (req.body.groupName || '').toString();
+        const panelLabel = (req.body.panelLabel || '').toString().trim();
+        await Group.updateOne({ name: groupName }, { panelLabel: panelLabel || 'Premium' });
+        res.redirect('/admin/group/' + encodeURIComponent(groupName));
+    } catch (e) {
+        res.status(500).send("Error updating panel label");
     }
 });
 
@@ -1164,6 +1187,58 @@ adminApp.get('/group/:name', async (req, res) => {
     
     const domainName = (groupInfo && groupInfo.nsRecord) ? groupInfo.nsRecord : (process.env.VPS_IP || req.hostname);
     const panelHost = process.env.VPS_IP || req.hostname;
+    const groupPanelLabel = (groupInfo && groupInfo.panelLabel ? groupInfo.panelLabel : 'Premium').toString();
+    const safeGroupPanelLabel = groupPanelLabel.replace(/"/g, '&quot;');
+    let activeNodeNames = [];
+    let activeNodeCountText = 'Unknown';
+    let activeNodeError = '';
+
+    if (groupInfo && groupInfo.masterIp) {
+        try {
+            const apiKeyHeader = groupInfo.masterApiKey || process.env.PANELMASTER_API_KEY;
+            let response;
+            try {
+                response = await fetchWithRetry(groupInfo.masterIp + '/api/active-groups', null, {
+                    method: 'get',
+                    headers: { 'x-api-key': apiKeyHeader },
+                    timeout: 5000
+                }, 1, 300);
+            } catch (e) {
+                response = await fetchWithRetry(groupInfo.masterIp + '/api/active-groups', {}, {
+                    method: 'post',
+                    headers: { 'x-api-key': apiKeyHeader },
+                    timeout: 5000
+                }, 1, 300);
+            }
+
+            const groups = (response && response.data && Array.isArray(response.data.groups)) ? response.data.groups : [];
+            const targetGroup = groups.find((g) => String(g.id) === String(groupInfo.masterGroupId)) ||
+                groups.find((g) => String(g.name) === String(groupInfo.name));
+
+            if (targetGroup) {
+                const candidateNodes = targetGroup.activeNodes || targetGroup.nodes || targetGroup.servers || targetGroup.serverList || [];
+                if (Array.isArray(candidateNodes)) {
+                    activeNodeNames = candidateNodes
+                        .map((n) => {
+                            if (typeof n === 'string') return n;
+                            if (!n || typeof n !== 'object') return '';
+                            return n.name || n.serverName || n.nodeName || n.id || '';
+                        })
+                        .filter(Boolean);
+                }
+                const serverCount = Number(targetGroup.serverCount);
+                if (Number.isFinite(serverCount)) {
+                    activeNodeCountText = String(serverCount);
+                } else {
+                    activeNodeCountText = String(activeNodeNames.length);
+                }
+            } else {
+                activeNodeCountText = '0';
+            }
+        } catch (err) {
+            activeNodeError = 'Cannot load nodes from master API right now.';
+        }
+    }
 
     let usersHtml = '';
     users.forEach((u) => {
@@ -1289,7 +1364,24 @@ adminApp.get('/group/:name', async (req, res) => {
                             <select name="masterData" required class="w-full border-2 border-yellow-300 bg-white p-3 rounded-2xl outline-none focus:border-yellow-500 font-bold text-sm text-slate-700 transition">${relinkOptions}</select>
                             <button type="submit" class="w-full bg-yellow-500 text-white rounded-2xl py-3.5 font-bold hover:bg-yellow-600 transition text-sm shadow-md active:scale-[0.98]">Re-Link Master</button>
                         </form>
+                        <form action="/admin/update-group-panel-label" method="POST" class="flex flex-col gap-3 mt-4 pt-4 border-t border-yellow-200">
+                            <input type="hidden" name="groupName" value="${groupName}">
+                            <input type="text" name="panelLabel" value="${safeGroupPanelLabel}" class="w-full border-2 border-yellow-300 bg-white p-3 rounded-2xl outline-none focus:border-yellow-500 font-bold text-sm text-slate-700 transition" placeholder="Panel badge text">
+                            <button type="submit" class="w-full bg-slate-800 text-white rounded-2xl py-3.5 font-bold hover:bg-black transition text-sm shadow-md active:scale-[0.98]">Save Panel Badge</button>
+                        </form>
                     </div>
+                </div>
+
+                <div class="bg-white rounded-[2rem] shadow-sm border border-slate-200 p-6 mb-8">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-lg font-black text-slate-800"><i class="fas fa-network-wired text-indigo-500 mr-2"></i> Active Nodes from Master</h3>
+                        <span class="text-xs font-black bg-indigo-100 text-indigo-700 px-3 py-1 rounded-xl border border-indigo-200">Count: ${activeNodeCountText}</span>
+                    </div>
+                    ${activeNodeError ? `<p class="text-sm text-red-500 font-bold">${activeNodeError}</p>` : ''}
+                    ${activeNodeNames.length > 0
+                        ? `<div class="flex flex-wrap gap-2">${activeNodeNames.map((n) => `<span class="text-xs font-bold bg-slate-100 text-slate-700 px-3 py-1 rounded-xl border border-slate-200">${n}</span>`).join('')}</div>`
+                        : `<p class="text-sm text-slate-500">No active node list returned for this group.</p>`
+                    }
                 </div>
 
                 <div class="bg-white rounded-[2rem] shadow-sm border border-slate-200 overflow-hidden">

@@ -146,6 +146,7 @@ userApp.get('/panel/:token', async (req, res) => {
         const progressColor = isExpired ? 'from-red-600 to-red-500 shadow-[0_0_15px_rgba(239,68,68,0.6)]' : 'from-indigo-600 via-indigo-500 to-purple-500 shadow-[0_0_15px_rgba(99,102,241,0.6)]';
         const logoUrl = "https://i.postimg.cc/G2FPpD7C/QUITO-profile-1.png"; 
         const outlineIconUrl = "https://i.postimg.cc/rm7q3wKz/images-(23).jpg";
+        const panelBadgeText = (group && group.panelLabel ? String(group.panelLabel).trim() : 'Premium') || 'Premium';
 
         let alertCardHtml = '';
         if (isExpired) {
@@ -187,12 +188,12 @@ userApp.get('/panel/:token', async (req, res) => {
                         </div>
                         <div class="bg-slate-800/90 px-3 py-1.5 rounded-xl border border-cyan-500/30 shadow-[0_0_15px_rgba(34,211,238,0.25)] flex items-center gap-2">
                             <i class="fas fa-gem text-cyan-400 text-[13px] animate-spin" style="animation-duration: 3s; filter: drop-shadow(0 0 6px #22d3ee);"></i>
-                            <span class="text-[11px] font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-300 to-blue-400 uppercase tracking-widest">Premium</span>
+                            <span class="text-[11px] font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-300 to-blue-400 uppercase tracking-widest">${panelBadgeText}</span>
                         </div>
                     </div>
 
                     <div class="mb-5 ml-1">
-                        <p class="text-sm font-bold text-slate-400">Username: <span class="text-[22px] font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-200 via-yellow-400 to-amber-500 drop-shadow-[0_0_12px_rgba(250,204,21,0.6)] tracking-wide ml-1 uppercase">${user.name}</span></p>
+                        <p class="text-sm font-bold text-slate-400">Username: <span class="text-[30px] font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-200 via-yellow-400 to-amber-500 drop-shadow-[0_0_14px_rgba(250,204,21,0.7)] tracking-wide ml-1 uppercase">${user.name}</span></p>
                     </div>
 
                     <div class="bg-[#151f32] rounded-3xl p-6 shadow-xl border border-slate-800 mb-6 relative overflow-hidden">
