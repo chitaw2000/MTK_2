@@ -611,4 +611,40 @@ userApp.post('/api/internal/sync-new-server', syncNewServerHandler);
 userApp.post('/sync-new-server', syncNewServerHandler);
 userApp.post('/admin/api/internal/sync-new-server', requireApiKey, syncNewServerHandler);
 
+// Pull-based traffic fallback API (old behavior compatible).
+userApp.get('/api/traffic/:userId', requireApiKey, async (req, res) => {
+    try {
+        const userId = String(req.params.userId || '').trim();
+        const metricsBaseUrl = String(process.env.VPN_API_URL || '').trim().replace(/\/$/, '');
+
+        if (!userId) {
+            return res.status(400).json({ success: false, error: 'Missing userId' });
+        }
+        if (!metricsBaseUrl) {
+            return res.status(500).json({ success: false, error: 'VPN_API_URL is not configured' });
+        }
+
+        const metricsResponse = await axios.get(`${metricsBaseUrl}/metrics/transfer`, { timeout: 6000 });
+        const trafficData = metricsResponse.data || {};
+        const bucket = trafficData.bytesTransferredByUserId || {};
+
+        const rawBytes = bucket[userId] !== undefined ? bucket[userId] : 0;
+        const numericBytes = Number(rawBytes);
+        const safeBytes = Number.isFinite(numericBytes) ? numericBytes : 0;
+        const usedGb = Number((safeBytes / (1024 * 1024 * 1024)).toFixed(2));
+
+        return res.json({
+            success: true,
+            userId,
+            used_gb: usedGb,
+            message: 'Traffic data fetched successfully'
+        });
+    } catch (error) {
+        return res.status(500).json({
+            success: false,
+            error: 'Failed to fetch traffic data'
+        });
+    }
+});
+
 module.exports = userApp;
