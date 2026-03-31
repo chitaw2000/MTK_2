@@ -616,6 +616,8 @@ userApp.get('/api/traffic/:userId', requireApiKey, async (req, res) => {
     try {
         const userId = String(req.params.userId || '').trim();
         const metricsBaseUrl = String(process.env.VPN_API_URL || '').trim().replace(/\/$/, '');
+        const metricsPath = String(process.env.VPN_METRICS_PATH || '/metrics/transfer').trim();
+        const upstreamApiKey = String(process.env.VPN_API_KEY || process.env.PANELMASTER_API_KEY || '').trim();
 
         if (!userId) {
             return res.status(400).json({ success: false, error: 'Missing userId' });
@@ -624,7 +626,21 @@ userApp.get('/api/traffic/:userId', requireApiKey, async (req, res) => {
             return res.status(500).json({ success: false, error: 'VPN_API_URL is not configured' });
         }
 
-        const metricsResponse = await axios.get(`${metricsBaseUrl}/metrics/transfer`, { timeout: 6000 });
+        const targetUrl = `${metricsBaseUrl}${metricsPath.startsWith('/') ? metricsPath : `/${metricsPath}`}`;
+        const metricsResponse = await axios.get(targetUrl, {
+            timeout: 6000,
+            maxRedirects: 0,
+            validateStatus: (status) => status >= 200 && status < 400,
+            headers: upstreamApiKey ? { 'x-api-key': upstreamApiKey } : undefined
+        });
+
+        if (metricsResponse.status >= 300) {
+            return res.status(502).json({
+                success: false,
+                error: 'Upstream metrics endpoint redirected (likely auth/login protected). Configure VPN_API_URL/VPN_METRICS_PATH/VPN_API_KEY.'
+            });
+        }
+
         const trafficData = metricsResponse.data || {};
         const bucket = trafficData.bytesTransferredByUserId || {};
 
