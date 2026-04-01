@@ -383,6 +383,45 @@ function buildServerLabels(accessKeys, existingLabels) {
     return labels;
 }
 
+function isPlainObject(value) {
+    return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function cloneValue(value) {
+    try {
+        return JSON.parse(JSON.stringify(value));
+    } catch (e) {
+        return value;
+    }
+}
+
+function buildGroupNodeTemplateMap(users) {
+    const templates = {};
+    for (const user of users) {
+        if (!user || !isPlainObject(user.accessKeys)) continue;
+        for (const [nodeKey, cfg] of Object.entries(user.accessKeys)) {
+            if (!nodeKey || templates[nodeKey] !== undefined) continue;
+            templates[nodeKey] = cloneValue(cfg);
+        }
+    }
+    return templates;
+}
+
+function buildNodeConfigForUser(user, templateConfig) {
+    const template = cloneValue(templateConfig);
+    if (!isPlainObject(template)) return template;
+    const ownKeys = isPlainObject(user && user.accessKeys) ? Object.values(user.accessKeys) : [];
+    const ownBase = ownKeys.find((v) => isPlainObject(v));
+    if (!ownBase) return template;
+
+    // Keep per-user credentials from existing keys while borrowing node host/port from template.
+    const carryFields = ['password', 'method', 'prefix', 'id', 'flow', 'encryption', 'security', 'plugin', 'plugin_opts'];
+    for (const f of carryFields) {
+        if (ownBase[f] !== undefined) template[f] = ownBase[f];
+    }
+    return template;
+}
+
 
 // ==========================================
 // 🌟 Common UI Components
@@ -1747,6 +1786,32 @@ adminApp.post('/sync-group-nodes', async (req, res) => {
                 } catch (err) { console.log(`❌ Failed to sync nodes for user: ${user.name} :: ${getErrMsg(err)}`); }
             }));
         }
+
+        // Safety net: if master refuses old-user regeneration, hydrate missing node keys
+        // from other users in the same group who already have the new nodes.
+        const postSyncUsers = await User.find({ groupName: groupName });
+        const groupTemplates = buildGroupNodeTemplateMap(postSyncUsers);
+        const templateNodeKeys = Object.keys(groupTemplates);
+        for (const u of postSyncUsers) {
+            const existing = isPlainObject(u.accessKeys) ? { ...u.accessKeys } : {};
+            let changed = false;
+            for (const nodeKey of templateNodeKeys) {
+                if (existing[nodeKey] !== undefined) continue;
+                existing[nodeKey] = buildNodeConfigForUser(u, groupTemplates[nodeKey]);
+                changed = true;
+            }
+            if (!changed) continue;
+            const updatedLabels = buildServerLabels(existing, u.serverLabels);
+            const updateQuery = {
+                accessKeys: existing,
+                serverLabels: updatedLabels
+            };
+            if (!u.currentServer || u.currentServer === 'None' || !existing[u.currentServer]) {
+                updateQuery.currentServer = Object.keys(existing)[0] || 'None';
+            }
+            await User.updateOne({ _id: u._id }, { $set: updateQuery });
+        }
+
         res.redirect('/admin/group/' + encodeURIComponent(groupName));
     } catch (error) { 
         res.status(500).send("Error syncing nodes"); 
