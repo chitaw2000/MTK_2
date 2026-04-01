@@ -1261,6 +1261,7 @@ adminApp.get('/group/:name', async (req, res) => {
     const safeGroupPanelLabel = groupPanelLabel.replace(/"/g, '&quot;');
     const safeNsRecord = ((groupInfo && groupInfo.nsRecord) ? groupInfo.nsRecord : '').replace(/"/g, '&quot;');
     let activeNodeItems = [];
+    let activeNodeLabelById = {};
     let activeNodeCountText = 'Unknown';
     let activeNodeError = '';
 
@@ -1314,6 +1315,10 @@ adminApp.get('/group/:name', async (req, res) => {
                 } else if (typeof rawNodes === 'string' && rawNodes.trim()) {
                     activeNodeItems = rawNodes.split(',').map((s) => s.trim()).filter(Boolean).map((s) => ({ id: s, label: s }));
                 }
+                activeNodeLabelById = activeNodeItems.reduce((acc, n) => {
+                    if (n && n.id) acc[String(n.id)] = String(n.label || n.id);
+                    return acc;
+                }, {});
                 const serverCount = Number(targetGroup.serverCount);
                 if (Number.isFinite(serverCount)) {
                     activeNodeCountText = String(serverCount);
@@ -1336,7 +1341,7 @@ adminApp.get('/group/:name', async (req, res) => {
         const currentServerId = u.currentServer || 'None';
         const currentServerLabel = (u.serverLabels && u.currentServer && u.serverLabels[u.currentServer])
             ? u.serverLabels[u.currentServer]
-            : currentServerId;
+            : (activeNodeLabelById[currentServerId] || currentServerId);
         const usagePercent = u.totalGB > 0 ? ((u.usedGB / u.totalGB) * 100).toFixed(1) : 0;
         
         const isHighlighted = (u.token === highlightToken) ? 'bg-yellow-100 border-l-4 border-yellow-500 animate-pulse transition-colors shadow-inner' : 'hover:bg-indigo-50/50';

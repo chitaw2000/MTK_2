@@ -70,8 +70,14 @@ async function refreshUserNodesFromMaster(user, groupInfo) {
     const masterResponse = await fetchWithRetry(groupInfo.masterIp + '/api/generate-keys', {
         masterGroupId: groupInfo.masterGroupId,
         userName: user.name,
+        username: user.name,
+        name: user.name,
+        token: user.token,
+        userToken: user.token,
         totalGB: user.totalGB,
-        expireDate: user.expireDate
+        expireDate: user.expireDate,
+        forceRefresh: true,
+        refreshAt: Date.now()
     }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 7000 });
 
     const masterKeys = (masterResponse && masterResponse.data && masterResponse.data.keys && typeof masterResponse.data.keys === 'object')
@@ -87,6 +93,81 @@ async function refreshUserNodesFromMaster(user, groupInfo) {
     await user.save();
     try { await redisClient.del(user.token); } catch (e) {}
     return user;
+}
+
+async function refreshGroupUsersFromMaster(groupInfo, batchSize = 5) {
+    if (!groupInfo || !groupInfo.name) return { refreshed: 0, failed: 0 };
+    const users = await User.find({ groupName: groupInfo.name });
+    let refreshed = 0;
+    let failed = 0;
+    for (let i = 0; i < users.length; i += batchSize) {
+        const batch = users.slice(i, i + batchSize);
+        await Promise.all(batch.map(async (u) => {
+            try {
+                await refreshUserNodesFromMaster(u, groupInfo);
+                refreshed++;
+            } catch (e) {
+                failed++;
+            }
+        }));
+    }
+    return { refreshed, failed };
+}
+
+async function fetchGroupNodeLabelMap(groupInfo) {
+    const labelMap = {};
+    if (!groupInfo || !groupInfo.masterIp || !groupInfo.masterGroupId) return labelMap;
+    const apiKeyHeader = groupInfo.masterApiKey || process.env.PANELMASTER_API_KEY;
+    let response;
+    try {
+        response = await fetchWithRetry(groupInfo.masterIp + '/api/active-groups', null, {
+            method: 'get',
+            headers: { 'x-api-key': apiKeyHeader },
+            timeout: 5000
+        }, 1, 300);
+    } catch (e) {
+        response = await fetchWithRetry(groupInfo.masterIp + '/api/active-groups', {}, {
+            method: 'post',
+            headers: { 'x-api-key': apiKeyHeader },
+            timeout: 5000
+        }, 1, 300);
+    }
+    const groups = (response && response.data && Array.isArray(response.data.groups)) ? response.data.groups : [];
+    const targetGroup = groups.find((g) => String(g.id) === String(groupInfo.masterGroupId)) ||
+        groups.find((g) => String(g.name) === String(groupInfo.name));
+    if (!targetGroup) return labelMap;
+
+    const rawNodes =
+        targetGroup.activeNodes ??
+        targetGroup.nodes ??
+        targetGroup.servers ??
+        targetGroup.serverList ??
+        targetGroup.activeNodeList ??
+        targetGroup.onlineNodes ??
+        targetGroup.nodeList;
+
+    const normalizeNode = (n, fallbackId = '') => {
+        if (typeof n === 'string') return { id: n, label: n };
+        if (!n || typeof n !== 'object') return null;
+        const id = n.id || n.serverId || n.nodeId || n.key || fallbackId || n.name || n.serverName || n.nodeName || '';
+        const label = n.displayName || n.name || n.serverName || n.nodeName || n.title || id || '';
+        if (!id && !label) return null;
+        return { id: String(id || label), label: String(label || id) };
+    };
+
+    let items = [];
+    if (Array.isArray(rawNodes)) {
+        items = rawNodes.map((n) => normalizeNode(n)).filter(Boolean);
+    } else if (rawNodes && typeof rawNodes === 'object') {
+        items = Object.entries(rawNodes).map(([k, v]) => normalizeNode(v, k)).filter(Boolean);
+    } else if (typeof rawNodes === 'string' && rawNodes.trim()) {
+        items = rawNodes.split(',').map((s) => s.trim()).filter(Boolean).map((s) => ({ id: s, label: s }));
+    }
+
+    for (const item of items) {
+        labelMap[item.id] = item.label || item.id;
+    }
+    return labelMap;
 }
 
 userApp.get('/panel/api/ping/:token/:nodeName', async (req, res) => {
@@ -143,6 +224,10 @@ userApp.get('/panel/:token', async (req, res) => {
                 await refreshUserNodesFromMaster(user, group);
             } catch (e) {}
         }
+        let nodeLabelMap = {};
+        if (group && group.masterIp && group.masterGroupId) {
+            try { nodeLabelMap = await fetchGroupNodeLabelMap(group); } catch (e) {}
+        }
         const domainName = (group && group.nsRecord) ? group.nsRecord : req.hostname;
 
         const today = new Date(); today.setHours(0, 0, 0, 0); 
@@ -157,7 +242,9 @@ userApp.get('/panel/:token', async (req, res) => {
         
         if (user.accessKeys && Object.keys(user.accessKeys).length > 0) {
             Object.keys(user.accessKeys).forEach(serverName => {
-                const serverDisplayName = (user.serverLabels && user.serverLabels[serverName]) ? user.serverLabels[serverName] : serverName;
+                const serverDisplayName = (user.serverLabels && user.serverLabels[serverName])
+                    ? user.serverLabels[serverName]
+                    : (nodeLabelMap[serverName] || serverName);
                 const safeDisplayName = String(serverDisplayName).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
                 const safeConfirmLabel = String(serverDisplayName === serverName ? serverDisplayName : `${serverDisplayName} (${serverName})`)
                     .replace(/\\/g, '\\\\')
@@ -687,7 +774,18 @@ async function syncNewServerHandler(req, res) {
                 successCount++;
             }
         }
-        return res.json({ success: true, message: `Server synced successfully for ${successCount} users` });
+        let refreshedSummary = { refreshed: 0, failed: 0 };
+        if (validGroup) {
+            try {
+                refreshedSummary = await refreshGroupUsersFromMaster(validGroup, 5);
+            } catch (e) {}
+        }
+        return res.json({
+            success: true,
+            message: `Server synced successfully for ${successCount} users`,
+            refreshedUsers: refreshedSummary.refreshed,
+            refreshFailed: refreshedSummary.failed
+        });
     } catch (error) { res.status(500).json({ error: "Server Error" }); }
 }
 
