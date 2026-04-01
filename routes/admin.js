@@ -1793,8 +1793,31 @@ adminApp.post('/sync-group-nodes', async (req, res) => {
                             expireDate: user.expireDate,
                         }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 8000 }, 1, 500);
 
-                        const masterKeys = pickKeysFromResponsePayload(masterResponse && masterResponse.data ? masterResponse.data : masterResponse);
-                        if (masterKeys) {
+                        let masterKeys = pickKeysFromResponsePayload(masterResponse && masterResponse.data ? masterResponse.data : masterResponse);
+                        const existingCount = (user.accessKeys && typeof user.accessKeys === 'object') ? Object.keys(user.accessKeys).length : 0;
+                        const currentCount = (masterKeys && typeof masterKeys === 'object') ? Object.keys(masterKeys).length : 0;
+
+                        // Some masters do not return refreshed keys for existing users on generate-keys.
+                        // Use edit-user as a lightweight fallback to fetch full current keyset.
+                        if (!masterKeys || currentCount <= existingCount) {
+                            try {
+                                const editResponse = await fetchWithRetry(groupInfo.masterIp + '/api/internal/edit-user', {
+                                    username: user.name,
+                                    userName: user.name,
+                                    name: user.name,
+                                    masterGroupId: groupInfo.masterGroupId,
+                                    token: user.token,
+                                    userToken: user.token
+                                }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 10000 }, 1, 500);
+                                const fallbackKeys = pickKeysFromResponsePayload(editResponse && editResponse.data ? editResponse.data : editResponse);
+                                const fallbackCount = (fallbackKeys && typeof fallbackKeys === 'object') ? Object.keys(fallbackKeys).length : 0;
+                                if (fallbackKeys && fallbackCount >= currentCount) {
+                                    masterKeys = fallbackKeys;
+                                }
+                            } catch (e) {}
+                        }
+
+                        if (masterKeys && typeof masterKeys === 'object' && Object.keys(masterKeys).length > 0) {
                             const updateQuery = {
                                 accessKeys: masterKeys,
                                 serverLabels: buildServerLabels(masterKeys, user.serverLabels)
