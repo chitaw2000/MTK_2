@@ -139,7 +139,8 @@ function buildServerLabels(accessKeys, existingLabels) {
     const keys = (accessKeys && typeof accessKeys === 'object') ? Object.keys(accessKeys) : [];
     for (const key of keys) {
         const oldLabel = source[key];
-        labels[key] = (oldLabel && String(oldLabel).trim()) ? String(oldLabel).trim() : key;
+        const cleaned = (oldLabel && String(oldLabel).trim()) ? String(oldLabel).trim() : '';
+        labels[key] = (!cleaned || cleaned === key) ? toDisplayNodeName(key) : cleaned;
     }
     return labels;
 }
@@ -406,8 +407,9 @@ userApp.get('/panel/:token', async (req, res) => {
                 } catch (e) {}
             }
             renderNodeKeys.forEach(serverName => {
-                const serverDisplayName = (user.serverLabels && user.serverLabels[serverName])
-                    ? user.serverLabels[serverName]
+                const rawSavedLabel = (user.serverLabels && user.serverLabels[serverName]) ? String(user.serverLabels[serverName]).trim() : '';
+                const serverDisplayName = (rawSavedLabel && rawSavedLabel !== serverName)
+                    ? rawSavedLabel
                     : (nodeLabelMap[serverName] || toDisplayNodeName(serverName));
                 const safeDisplayName = String(serverDisplayName).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
                 const safeNodeId = serverName.replace(/[^a-zA-Z0-9_-]/g, '-');
@@ -642,9 +644,7 @@ userApp.post('/panel/change-server', async (req, res) => {
         
         const today = new Date(); today.setHours(0, 0, 0, 0); 
         const expDate = new Date(user.expireDate);
-        if (user.usedGB >= user.totalGB || today > expDate) {
-            return res.status(403).send("Account Expired. You cannot change server.");
-        }
+        const isExpired = user.usedGB >= user.totalGB || today > expDate;
         
         const groupInfo = await Group.findOne({ name: user.groupName });
         if (!groupInfo) return res.status(404).send("Group Error");
@@ -659,11 +659,11 @@ userApp.post('/panel/change-server', async (req, res) => {
         if (!user.accessKeys || !user.accessKeys[newServer]) {
             return res.status(400).send("Selected server is no longer available.");
         }
-        user.currentServer = newServer; await user.save(); 
+        user.currentServer = newServer; await user.save();
         try { await redisClient.del(token); } catch(e){}
         try { await fetchWithRetry(groupInfo.masterIp + '/api/webhook/switch', { token: token, activeServer: newServer }, { headers: { 'x-api-key': apiKeyHeader } }); } catch (err) {}
         
-        res.redirect('/panel/' + token + '?switched=true');
+        res.redirect('/panel/' + token + (isExpired ? '' : '?switched=true'));
     } catch (error) { res.status(500).send("Error Changing Server"); }
 });
 
