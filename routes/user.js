@@ -57,12 +57,13 @@ async function getActiveNodeProbe(groupInfo, nodeKeys = []) {
     const result = { activeKeys: new Set(), checkedCount: 0 };
     if (!groupInfo || !groupInfo.masterIp || !Array.isArray(nodeKeys) || nodeKeys.length === 0) return result;
     const apiKeyHeader = groupInfo.masterApiKey || process.env.PANELMASTER_API_KEY;
+    const candidates = nodeKeys.slice(0, 20); // keep panel render snappy on huge groups
 
-    await Promise.all(nodeKeys.map(async (nodeKey) => {
+    await Promise.all(candidates.map(async (nodeKey) => {
         try {
             const response = await axios.get(`${groupInfo.masterIp}/api/ping/${encodeURIComponent(nodeKey)}`, {
                 headers: { 'x-api-key': apiKeyHeader },
-                timeout: 1800
+                timeout: 600
             });
             result.checkedCount += 1;
             const data = response && response.data ? response.data : {};
@@ -182,15 +183,6 @@ async function backfillUserAccessKeysFromGroupTemplates(user, groupInfo) {
         }
     }
 
-    if (groupInfo && groupInfo.masterIp) {
-        const probe = await getActiveNodeProbe(groupInfo, Object.keys(templates));
-        if (probe.checkedCount > 0) {
-            for (const key of Object.keys(templates)) {
-                if (!probe.activeKeys.has(key)) delete templates[key];
-            }
-        }
-    }
-
     const existing = isPlainObject(user.accessKeys) ? { ...user.accessKeys } : {};
     let changed = false;
     for (const [nodeKey, cfg] of Object.entries(templates)) {
@@ -276,13 +268,13 @@ async function fetchGroupNodeLabelMap(groupInfo) {
         response = await fetchWithRetry(groupInfo.masterIp + '/api/active-groups', null, {
             method: 'get',
             headers: { 'x-api-key': apiKeyHeader },
-            timeout: 5000
+            timeout: 1200
         }, 1, 300);
     } catch (e) {
         response = await fetchWithRetry(groupInfo.masterIp + '/api/active-groups', {}, {
             method: 'post',
             headers: { 'x-api-key': apiKeyHeader },
-            timeout: 5000
+            timeout: 1200
         }, 1, 300);
     }
     const groups = (response && response.data && Array.isArray(response.data.groups)) ? response.data.groups : [];
@@ -333,7 +325,7 @@ userApp.get('/panel/api/ping/:token/:nodeName', async (req, res) => {
 
         const apiKeyHeader = group.masterApiKey || process.env.PANELMASTER_API_KEY;
         const url = `${group.masterIp}/api/ping/${encodeURIComponent(nodeName)}`;
-        const response = await axios.get(url, { headers: { 'x-api-key': apiKeyHeader }, timeout: 4000 });
+        const response = await axios.get(url, { headers: { 'x-api-key': apiKeyHeader }, timeout: 900 });
         res.json(response.data);
     } catch (error) { res.json({ status: 'offline' }); }
 });
@@ -372,11 +364,7 @@ userApp.get('/panel/:token', async (req, res) => {
         if(!user) return res.status(404).send("User not found or Invalid Token!");
 
         const group = await Group.findOne({ name: user.groupName });
-        if (group && group.masterIp && group.masterGroupId) {
-            try {
-                await refreshUserNodesFromMaster(user, group);
-            } catch (e) {}
-        }
+        // Avoid blocking panel render with heavy master refresh calls.
         try {
             await backfillUserAccessKeysFromGroupTemplates(user, group);
         } catch (e) {}
@@ -395,16 +383,15 @@ userApp.get('/panel/:token', async (req, res) => {
 
         let nodesListHtml = '';
         let nodeEntries = []; 
+        let activeProbe = { activeKeys: new Set(), checkedCount: 0 };
+        if (group && group.masterIp && user.accessKeys && Object.keys(user.accessKeys).length > 0) {
+            try { activeProbe = await getActiveNodeProbe(group, Object.keys(user.accessKeys)); } catch (e) {}
+        }
         
         if (user.accessKeys && Object.keys(user.accessKeys).length > 0) {
             let renderNodeKeys = Object.keys(user.accessKeys);
-            if (group && group.masterIp && renderNodeKeys.length > 0) {
-                try {
-                    const probe = await getActiveNodeProbe(group, renderNodeKeys);
-                    if (probe.checkedCount > 0) {
-                        renderNodeKeys = renderNodeKeys.filter((k) => probe.activeKeys.has(k));
-                    }
-                } catch (e) {}
+            if (activeProbe.checkedCount > 0) {
+                renderNodeKeys = renderNodeKeys.filter((k) => activeProbe.activeKeys.has(k));
             }
             renderNodeKeys.forEach(serverName => {
                 const rawSavedLabel = (user.serverLabels && user.serverLabels[serverName]) ? String(user.serverLabels[serverName]).trim() : '';
@@ -563,7 +550,7 @@ userApp.get('/panel/:token', async (req, res) => {
                 </div>
 
                 <script>
-                    const nodes = ${JSON.stringify(nodeEntries)}; const token = '${token}'; let currentFormId = '';
+                    const nodes = ${JSON.stringify(nodeEntries)}; const token = '${token}'; const isExpiredAccount = ${isExpired ? 'true' : 'false'}; let currentFormId = '';
                     window.onload = function() {
                         const urlParams = new URLSearchParams(window.location.search);
                         if (urlParams.get('switched') === 'true') {
@@ -593,6 +580,7 @@ userApp.get('/panel/:token', async (req, res) => {
                         if(currentFormId) { document.getElementById('confirmBtn').innerHTML = '<i class="fas fa-circle-notch fa-spin text-xl"></i>'; document.getElementById(currentFormId).submit(); }
                     });
                     async function fetchPings() {
+                        if (isExpiredAccount) return;
                         if (nodes.length === 0) return;
                         for(let node of nodes) {
                             try {
