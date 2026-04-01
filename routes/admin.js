@@ -1845,30 +1845,8 @@ adminApp.post('/sync-group-nodes', async (req, res) => {
             }));
         }
 
-        // Safety net: if master refuses old-user regeneration, hydrate missing node keys
-        // from other users in the same group who already have the new nodes.
-        const postSyncUsers = await User.find({ groupName: groupName });
-        const groupTemplates = buildGroupNodeTemplateMap(postSyncUsers);
-        const templateNodeKeys = Object.keys(groupTemplates);
-        for (const u of postSyncUsers) {
-            const existing = isPlainObject(u.accessKeys) ? { ...u.accessKeys } : {};
-            let changed = false;
-            for (const nodeKey of templateNodeKeys) {
-                if (existing[nodeKey] !== undefined) continue;
-                existing[nodeKey] = buildNodeConfigForUser(u, groupTemplates[nodeKey]);
-                changed = true;
-            }
-            if (!changed) continue;
-            const updatedLabels = buildServerLabels(existing, u.serverLabels);
-            const updateQuery = {
-                accessKeys: existing,
-                serverLabels: updatedLabels
-            };
-            if (!u.currentServer || u.currentServer === 'None' || !existing[u.currentServer]) {
-                updateQuery.currentServer = Object.keys(existing)[0] || 'None';
-            }
-            await User.updateOne({ _id: u._id }, { $set: updateQuery });
-        }
+        // Important: do not synthesize node configs from other users.
+        // It can create credentials that differ from master-issued keys and fail to connect.
 
         res.redirect('/admin/group/' + encodeURIComponent(groupName));
     } catch (error) { 
