@@ -1785,61 +1785,41 @@ adminApp.post('/sync-group-nodes', async (req, res) => {
             const batch = users.slice(i, i + batchSize);
             await Promise.all(batch.map(async (user) => {
                 try {
-                    let masterKeys = null;
                     try {
                         const masterResponse = await fetchWithRetry(groupInfo.masterIp + '/api/generate-keys', {
                             masterGroupId: groupInfo.masterGroupId,
                             userName: user.name,
-                            username: user.name,
-                            name: user.name,
                             totalGB: user.totalGB,
                             expireDate: user.expireDate,
-                            token: user.token,
-                            userToken: user.token,
-                            allowExisting: true,
-                            updateIfExists: true
-                        }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 12000 }, 1, 500);
-                        masterKeys = pickKeysFromResponsePayload(masterResponse && masterResponse.data ? masterResponse.data : masterResponse);
-                    } catch (genErr) {
-                        try {
-                            const editResponse = await fetchWithRetry(groupInfo.masterIp + '/api/internal/edit-user', {
-                                username: user.name,
-                                userName: user.name,
-                                name: user.name,
-                                totalGB: user.totalGB,
-                                usedGB: user.usedGB,
-                                expireDate: user.expireDate,
-                                masterGroupId: groupInfo.masterGroupId,
-                                token: user.token,
-                                userToken: user.token
-                            }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 20000 }, 1, 500);
-                            masterKeys = pickKeysFromResponsePayload(editResponse && editResponse.data ? editResponse.data : editResponse);
+                        }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 8000 }, 1, 500);
 
-                            if (!masterKeys) {
-                                const minimalEditResponse = await fetchWithRetry(groupInfo.masterIp + '/api/internal/edit-user', {
-                                    username: user.name,
-                                    userName: user.name,
-                                    name: user.name,
-                                    masterGroupId: groupInfo.masterGroupId
-                                }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 20000 }, 1, 500);
-                                masterKeys = pickKeysFromResponsePayload(minimalEditResponse && minimalEditResponse.data ? minimalEditResponse.data : minimalEditResponse);
+                        const masterKeys = pickKeysFromResponsePayload(masterResponse && masterResponse.data ? masterResponse.data : masterResponse);
+                        if (masterKeys) {
+                            const updateQuery = {};
+                            for (const [nodeName, nodeConfig] of Object.entries(masterKeys)) {
+                                updateQuery[`accessKeys.${nodeName}`] = nodeConfig;
                             }
-                        } catch (editErr) {
-                            console.log(`❌ edit-user fallback failed for ${user.name}: ${getErrMsg(editErr)}`);
+                            const mergedKeys = {
+                                ...(isPlainObject(user.accessKeys) ? user.accessKeys : {}),
+                                ...masterKeys
+                            };
+                            updateQuery.serverLabels = buildServerLabels(mergedKeys, user.serverLabels);
+                            if (!user.currentServer || user.currentServer === "None") {
+                                updateQuery.currentServer = Object.keys(masterKeys)[0] || "None";
+                            }
+                            await User.updateOne({ _id: user._id }, { $set: updateQuery });
+
+                            try {
+                                await fetchWithRetry(groupInfo.masterIp + '/api/internal/edit-user', {
+                                    username: user.name,
+                                    totalGB: user.totalGB,
+                                    usedGB: user.usedGB,
+                                    expireDate: user.expireDate
+                                }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 3000 });
+                            } catch (e) {}
                         }
-                        if (!masterKeys) {
-                            console.log(`❌ generate-keys failed for ${user.name}: ${getErrMsg(genErr)}`);
-                        }
-                    }
-                    if (masterKeys) {
-                        const updateQuery = {
-                            accessKeys: masterKeys,
-                            serverLabels: buildServerLabels(masterKeys, user.serverLabels)
-                        };
-                        if (!user.currentServer || user.currentServer === "None" || !masterKeys[user.currentServer]) {
-                            updateQuery["currentServer"] = Object.keys(masterKeys)[0] || "None";
-                        }
-                        await User.updateOne({ _id: user._id }, { $set: updateQuery });
+                    } catch (genErr) {
+                        console.log(`❌ Failed to sync nodes for user: ${user.name} :: ${getErrMsg(genErr)}`);
                     }
                 } catch (err) { console.log(`❌ Failed to sync nodes for user: ${user.name} :: ${getErrMsg(err)}`); }
             }));
