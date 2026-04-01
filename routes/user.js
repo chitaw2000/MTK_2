@@ -244,7 +244,7 @@ userApp.get('/panel/:token', async (req, res) => {
             Object.keys(user.accessKeys).forEach(serverName => {
                 const serverDisplayName = (user.serverLabels && user.serverLabels[serverName])
                     ? user.serverLabels[serverName]
-                    : (nodeLabelMap[serverName] || serverName);
+                    : (nodeLabelMap[serverName] || toDisplayNodeName(serverName));
                 const safeDisplayName = String(serverDisplayName).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
                 const safeConfirmLabel = String(serverDisplayName === serverName ? serverDisplayName : `${serverDisplayName} (${serverName})`)
                     .replace(/\\/g, '\\\\')
@@ -565,6 +565,24 @@ function normalizeCandidate(value) {
     return String(value || '').trim();
 }
 
+function normalizeLooseIdentity(value) {
+    let v = String(value || '').trim();
+    try { v = decodeURIComponent(v); } catch (e) {}
+    return v.toLowerCase().replace(/\s+/g, '').replace(/[^a-z0-9_-]/g, '');
+}
+
+function toDisplayNodeName(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return 'Unknown Node';
+    const m = raw.match(/(?:^|[_-])server[_-]?(\d+)$/i);
+    if (m) return `Server ${m[1]}`;
+    return raw
+        .replace(/[_-]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 function flattenPayload(input, out = {}) {
     if (!input || typeof input !== 'object') return out;
     for (const [k, v] of Object.entries(input)) {
@@ -757,10 +775,42 @@ async function syncNewServerHandler(req, res) {
             return res.status(401).json({ error: "Unauthorized" });
         }
 
+        const normalizedServerPayload =
+            userKeys && typeof userKeys === 'object' && !Array.isArray(userKeys)
+                ? userKeys
+                : {};
+        let userConfigMap = normalizedServerPayload;
+        // Support nested payload shape: userKeys: { "<serverId>": { "<identifier>": <config> } }
+        if (!Object.values(normalizedServerPayload).some((v) => typeof v === 'string' || (v && typeof v === 'object' && (v.server || v.password)))) {
+            const nestedCandidate = normalizedServerPayload[serverKey] || normalizedServerPayload[newServerName];
+            if (nestedCandidate && typeof nestedCandidate === 'object' && !Array.isArray(nestedCandidate)) {
+                userConfigMap = nestedCandidate;
+            }
+        }
+
+        const groupUsers = validGroup ? await User.find({ groupName: validGroup.name }, { _id: 1, token: 1, name: 1 }) : [];
+        const byToken = new Map();
+        const byNameExact = new Map();
+        const byNameLoose = new Map();
+        for (const gu of groupUsers) {
+            byToken.set(String(gu.token || ''), gu);
+            byNameExact.set(String(gu.name || '').toLowerCase(), gu);
+            byNameLoose.set(normalizeLooseIdentity(gu.name || ''), gu);
+        }
+
         let successCount = 0;
-        for (const [identifier, newConfig] of Object.entries(userKeys)) {
+        let unmatchedCount = 0;
+        for (const [identifierRaw, newConfig] of Object.entries(userConfigMap)) {
+            const identifier = String(identifierRaw || '').trim();
             const escapedIdentifier = identifier.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const user = await User.findOne({ $or: [{ token: identifier }, { name: new RegExp('^' + escapedIdentifier + '$', 'i') }] });
+            let user =
+                byToken.get(identifier) ||
+                byNameExact.get(identifier.toLowerCase()) ||
+                byNameLoose.get(normalizeLooseIdentity(identifier));
+
+            if (!user) {
+                user = await User.findOne({ $or: [{ token: identifier }, { name: new RegExp('^' + escapedIdentifier + '$', 'i') }] });
+            }
 
             if (user) {
                 const updateQuery = {
@@ -772,6 +822,8 @@ async function syncNewServerHandler(req, res) {
                 await User.updateOne({ _id: user._id }, { $set: updateQuery });
                 try { await redisClient.del(user.token); } catch(e){}
                 successCount++;
+            } else {
+                unmatchedCount++;
             }
         }
         let refreshedSummary = { refreshed: 0, failed: 0 };
@@ -784,7 +836,8 @@ async function syncNewServerHandler(req, res) {
             success: true,
             message: `Server synced successfully for ${successCount} users`,
             refreshedUsers: refreshedSummary.refreshed,
-            refreshFailed: refreshedSummary.failed
+            refreshFailed: refreshedSummary.failed,
+            unmatchedIdentifiers: unmatchedCount
         });
     } catch (error) { res.status(500).json({ error: "Server Error" }); }
 }

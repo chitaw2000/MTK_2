@@ -1332,6 +1332,21 @@ adminApp.get('/group/:name', async (req, res) => {
             activeNodeError = 'Cannot load nodes from master API right now.';
         }
     }
+    if (activeNodeItems.length === 0) {
+        const seen = new Set();
+        for (const u of users) {
+            const keys = (u.accessKeys && typeof u.accessKeys === 'object') ? Object.keys(u.accessKeys) : [];
+            for (const key of keys) {
+                if (!key || seen.has(key)) continue;
+                seen.add(key);
+                const label = (u.serverLabels && u.serverLabels[key]) ? String(u.serverLabels[key]) : String(key);
+                activeNodeItems.push({ id: String(key), label });
+            }
+        }
+        if (activeNodeItems.length > 0 && (activeNodeCountText === 'Unknown' || activeNodeCountText === '0')) {
+            activeNodeCountText = String(activeNodeItems.length);
+        }
+    }
 
     let usersHtml = '';
     users.forEach((u) => {
