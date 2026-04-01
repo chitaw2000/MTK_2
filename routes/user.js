@@ -53,6 +53,42 @@ async function fetchWithRetry(url, data, config, retries = 3, delay = 1000) {
     }
 }
 
+function buildServerLabels(accessKeys, existingLabels) {
+    const labels = {};
+    const source = (existingLabels && typeof existingLabels === 'object') ? existingLabels : {};
+    const keys = (accessKeys && typeof accessKeys === 'object') ? Object.keys(accessKeys) : [];
+    for (const key of keys) {
+        const oldLabel = source[key];
+        labels[key] = (oldLabel && String(oldLabel).trim()) ? String(oldLabel).trim() : key;
+    }
+    return labels;
+}
+
+async function refreshUserNodesFromMaster(user, groupInfo) {
+    if (!user || !groupInfo || !groupInfo.masterIp || !groupInfo.masterGroupId) return user;
+    const apiKeyHeader = groupInfo.masterApiKey || process.env.PANELMASTER_API_KEY;
+    const masterResponse = await fetchWithRetry(groupInfo.masterIp + '/api/generate-keys', {
+        masterGroupId: groupInfo.masterGroupId,
+        userName: user.name,
+        totalGB: user.totalGB,
+        expireDate: user.expireDate
+    }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 7000 });
+
+    const masterKeys = (masterResponse && masterResponse.data && masterResponse.data.keys && typeof masterResponse.data.keys === 'object')
+        ? masterResponse.data.keys
+        : null;
+    if (!masterKeys) return user;
+
+    user.accessKeys = masterKeys;
+    user.serverLabels = buildServerLabels(masterKeys, user.serverLabels);
+    if (!user.currentServer || !masterKeys[user.currentServer]) {
+        user.currentServer = Object.keys(masterKeys)[0] || 'None';
+    }
+    await user.save();
+    try { await redisClient.del(user.token); } catch (e) {}
+    return user;
+}
+
 userApp.get('/panel/api/ping/:token/:nodeName', async (req, res) => {
     try {
         const { token, nodeName } = req.params;
@@ -102,6 +138,11 @@ userApp.get('/panel/:token', async (req, res) => {
         if(!user) return res.status(404).send("User not found or Invalid Token!");
 
         const group = await Group.findOne({ name: user.groupName });
+        if (group && group.masterIp && group.masterGroupId) {
+            try {
+                await refreshUserNodesFromMaster(user, group);
+            } catch (e) {}
+        }
         const domainName = (group && group.nsRecord) ? group.nsRecord : req.hostname;
 
         const today = new Date(); today.setHours(0, 0, 0, 0); 
@@ -362,18 +403,11 @@ userApp.post('/panel/change-server', async (req, res) => {
 
         if (!user.accessKeys || !user.accessKeys[newServer]) {
             try {
-                const masterResponse = await fetchWithRetry(groupInfo.masterIp + '/api/generate-keys', {
-                    masterGroupId: groupInfo.masterGroupId, userName: user.name, totalGB: user.totalGB, expireDate: user.expireDate
-                }, { headers: { 'x-api-key': apiKeyHeader } });
-                
-                if (masterResponse.data && masterResponse.data.keys) { 
-                    const updateQuery = {};
-                    for (const [nodeName, nodeConfig] of Object.entries(masterResponse.data.keys)) {
-                        updateQuery[`accessKeys.${nodeName}`] = nodeConfig;
-                    }
-                    await User.updateOne({ _id: user._id }, { $set: updateQuery });
-                }
+                await refreshUserNodesFromMaster(user, groupInfo);
             } catch (err) {}
+        }
+        if (!user.accessKeys || !user.accessKeys[newServer]) {
+            return res.status(400).send("Selected server is no longer available.");
         }
         user.currentServer = newServer; await user.save(); 
         try { await redisClient.del(token); } catch(e){}

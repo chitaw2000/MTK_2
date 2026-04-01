@@ -352,6 +352,17 @@ function normalizeMasterBaseUrl(value) {
     return url.replace(/\/$/, '');
 }
 
+function buildServerLabels(accessKeys, existingLabels) {
+    const labels = {};
+    const source = (existingLabels && typeof existingLabels === 'object') ? existingLabels : {};
+    const keys = (accessKeys && typeof accessKeys === 'object') ? Object.keys(accessKeys) : [];
+    for (const key of keys) {
+        const oldLabel = source[key];
+        labels[key] = (oldLabel && String(oldLabel).trim()) ? String(oldLabel).trim() : key;
+    }
+    return labels;
+}
+
 
 // ==========================================
 // 🌟 Common UI Components
@@ -1276,20 +1287,32 @@ adminApp.get('/group/:name', async (req, res) => {
                 groups.find((g) => String(g.name) === String(groupInfo.name));
 
             if (targetGroup) {
-                const candidateNodes = targetGroup.activeNodes || targetGroup.nodes || targetGroup.servers || targetGroup.serverList || [];
-                if (Array.isArray(candidateNodes)) {
-                    activeNodeItems = candidateNodes
-                        .map((n) => {
-                            if (typeof n === 'string') {
-                                return { id: n, label: n };
-                            }
-                            if (!n || typeof n !== 'object') return null;
-                            const id = n.id || n.serverId || n.nodeId || n.name || n.serverName || n.nodeName || '';
-                            const label = n.displayName || n.name || n.serverName || n.nodeName || id || '';
-                            if (!id && !label) return null;
-                            return { id: String(id || label), label: String(label || id) };
-                        })
+                const normalizeNode = (n, fallbackId = '') => {
+                    if (typeof n === 'string') return { id: n, label: n };
+                    if (!n || typeof n !== 'object') return null;
+                    const id = n.id || n.serverId || n.nodeId || n.key || fallbackId || n.name || n.serverName || n.nodeName || '';
+                    const label = n.displayName || n.name || n.serverName || n.nodeName || n.title || id || '';
+                    if (!id && !label) return null;
+                    return { id: String(id || label), label: String(label || id) };
+                };
+
+                const rawNodes =
+                    targetGroup.activeNodes ??
+                    targetGroup.nodes ??
+                    targetGroup.servers ??
+                    targetGroup.serverList ??
+                    targetGroup.activeNodeList ??
+                    targetGroup.onlineNodes ??
+                    targetGroup.nodeList;
+
+                if (Array.isArray(rawNodes)) {
+                    activeNodeItems = rawNodes.map((n) => normalizeNode(n)).filter(Boolean);
+                } else if (rawNodes && typeof rawNodes === 'object') {
+                    activeNodeItems = Object.entries(rawNodes)
+                        .map(([k, v]) => normalizeNode(v, k))
                         .filter(Boolean);
+                } else if (typeof rawNodes === 'string' && rawNodes.trim()) {
+                    activeNodeItems = rawNodes.split(',').map((s) => s.trim()).filter(Boolean).map((s) => ({ id: s, label: s }));
                 }
                 const serverCount = Number(targetGroup.serverCount);
                 if (Number.isFinite(serverCount)) {
@@ -1619,12 +1642,13 @@ adminApp.post('/sync-group-nodes', async (req, res) => {
                     }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 8000 });
 
                     if (masterResponse.data && masterResponse.data.keys) {
-                        const updateQuery = {};
-                        for (const [nodeName, nodeConfig] of Object.entries(masterResponse.data.keys)) {
-                            updateQuery[`accessKeys.${nodeName}`] = nodeConfig;
-                        }
-                        if (!user.currentServer || user.currentServer === "None") {
-                            updateQuery["currentServer"] = Object.keys(masterResponse.data.keys)[0] || "None";
+                        const masterKeys = masterResponse.data.keys;
+                        const updateQuery = {
+                            accessKeys: masterKeys,
+                            serverLabels: buildServerLabels(masterKeys, user.serverLabels)
+                        };
+                        if (!user.currentServer || user.currentServer === "None" || !masterKeys[user.currentServer]) {
+                            updateQuery["currentServer"] = Object.keys(masterKeys)[0] || "None";
                         }
                         await User.updateOne({ _id: user._id }, { $set: updateQuery });
 
@@ -1669,7 +1693,11 @@ adminApp.post('/add-user', async (req, res) => {
             const defaultServer = Object.keys(masterResponse.data.keys)[0] || "None";
             await User.create({ 
                 name, token, groupName, totalGB: Number(totalGB), usedGB: 0, 
-                currentServer: defaultServer, expireDate, accessKeys: masterResponse.data.keys, userNo: nextNo 
+                currentServer: defaultServer,
+                expireDate,
+                accessKeys: masterResponse.data.keys,
+                serverLabels: buildServerLabels(masterResponse.data.keys, {}),
+                userNo: nextNo 
             });
             res.redirect('/admin/group/' + encodeURIComponent(groupName));
         } else { 
