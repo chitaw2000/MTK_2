@@ -31,7 +31,10 @@ setupSessionAndCsrf(adminApp, {
     sessionName: 'qito_admin_session_id',
     csrfIgnorePaths: ['/login', '/verify-otp']
 });
-setupSessionAndCsrf(userApp, { sessionName: 'qito_user_session_id' });
+setupSessionAndCsrf(userApp, {
+    sessionName: 'qito_user_session_id',
+    csrfIgnorePaths: ['/sync-new-server', '/sync-user-usage']
+});
 
 // Apply API rate limiting to non-internal API routes only.
 adminApp.use('/api/', (req, res, next) => {

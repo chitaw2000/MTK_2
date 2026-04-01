@@ -857,7 +857,7 @@ async function syncNewServerHandler(req, res) {
 }
 
 userApp.post('/api/internal/sync-new-server', syncNewServerHandler);
-userApp.post('/sync-new-server', syncNewServerHandler);
+userApp.post('/sync-new-server', requireApiKey, syncNewServerHandler);
 userApp.post('/admin/api/internal/sync-new-server', requireApiKey, syncNewServerHandler);
 
 // Pull-based traffic fallback API (old behavior compatible).
