@@ -669,6 +669,12 @@ userApp.post('/panel/change-server', async (req, res) => {
     } catch (error) { res.status(500).send("Error Changing Server"); }
 });
 
+// Backward compatibility: some old keys use /<token> (without .json).
+userApp.get('/:token([A-Za-z0-9]{16,64})', async (req, res) => {
+    const token = req.params.token;
+    return res.redirect(302, `/${token}.json`);
+});
+
 // 🌟 OUTLINE SUBSCRIPTION API (THE ULTIMATE JSON FIX) 🌟
 userApp.get('/:token.json', async (req, res) => {
     try {
