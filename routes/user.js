@@ -118,6 +118,9 @@ userApp.get('/panel/:token', async (req, res) => {
             Object.keys(user.accessKeys).forEach(serverName => {
                 const serverDisplayName = (user.serverLabels && user.serverLabels[serverName]) ? user.serverLabels[serverName] : serverName;
                 const safeDisplayName = String(serverDisplayName).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                const safeConfirmLabel = String(serverDisplayName === serverName ? serverDisplayName : `${serverDisplayName} (${serverName})`)
+                    .replace(/\\/g, '\\\\')
+                    .replace(/'/g, "\\'");
                 const safeNodeId = serverName.replace(/[^a-zA-Z0-9_-]/g, '-');
                 nodeEntries.push({ key: serverName, safeId: safeNodeId });
                 const isSelected = user.currentServer === serverName;
@@ -130,10 +133,13 @@ userApp.get('/panel/:token', async (req, res) => {
                 <form id="form-${safeNodeId}" action="/panel/change-server" method="POST" class="m-0 border-b border-slate-800 last:border-0">
                     <input type="hidden" name="token" value="${token}">
                     <input type="hidden" name="newServer" value="${serverName}">
-                    <button type="button" onclick="confirmSwitch('form-${safeNodeId}', '${safeDisplayName}')" class="w-full flex justify-between items-center p-4 transition-all duration-200 ${activeClass}">
+                    <button type="button" onclick="confirmSwitch('form-${safeNodeId}', '${safeConfirmLabel}')" class="w-full flex justify-between items-center p-4 transition-all duration-200 ${activeClass}">
                         <div class="flex items-center gap-3">
                             <div class="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center border border-slate-700"><i class="fas fa-globe ${iconColor} text-sm"></i></div>
-                            <span class="font-bold ${isSelected ? 'text-white' : 'text-slate-300'} text-[15px] tracking-wide">${serverDisplayName}</span>
+                            <div class="flex flex-col items-start leading-tight">
+                                <span class="font-bold ${isSelected ? 'text-white' : 'text-slate-300'} text-[15px] tracking-wide">${serverDisplayName}</span>
+                                ${serverDisplayName !== serverName ? `<span class="text-[11px] font-semibold text-slate-500 tracking-wide">ID: ${serverName}</span>` : ''}
+                            </div>
                         </div>
                         <div class="flex items-center gap-4">
                             <span id="ping-${safeNodeId}" class="text-xs font-semibold text-slate-500 w-16 text-right tracking-wider"><i class="fas fa-circle-notch fa-spin text-slate-600"></i></span>

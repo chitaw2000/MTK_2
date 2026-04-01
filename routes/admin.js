@@ -1249,7 +1249,7 @@ adminApp.get('/group/:name', async (req, res) => {
     const groupPanelLabel = (groupInfo && groupInfo.panelLabel ? groupInfo.panelLabel : 'Premium').toString();
     const safeGroupPanelLabel = groupPanelLabel.replace(/"/g, '&quot;');
     const safeNsRecord = ((groupInfo && groupInfo.nsRecord) ? groupInfo.nsRecord : '').replace(/"/g, '&quot;');
-    let activeNodeNames = [];
+    let activeNodeItems = [];
     let activeNodeCountText = 'Unknown';
     let activeNodeError = '';
 
@@ -1278,11 +1278,16 @@ adminApp.get('/group/:name', async (req, res) => {
             if (targetGroup) {
                 const candidateNodes = targetGroup.activeNodes || targetGroup.nodes || targetGroup.servers || targetGroup.serverList || [];
                 if (Array.isArray(candidateNodes)) {
-                    activeNodeNames = candidateNodes
+                    activeNodeItems = candidateNodes
                         .map((n) => {
-                            if (typeof n === 'string') return n;
-                            if (!n || typeof n !== 'object') return '';
-                            return n.displayName || n.name || n.serverName || n.nodeName || n.id || '';
+                            if (typeof n === 'string') {
+                                return { id: n, label: n };
+                            }
+                            if (!n || typeof n !== 'object') return null;
+                            const id = n.id || n.serverId || n.nodeId || n.name || n.serverName || n.nodeName || '';
+                            const label = n.displayName || n.name || n.serverName || n.nodeName || id || '';
+                            if (!id && !label) return null;
+                            return { id: String(id || label), label: String(label || id) };
                         })
                         .filter(Boolean);
                 }
@@ -1290,7 +1295,7 @@ adminApp.get('/group/:name', async (req, res) => {
                 if (Number.isFinite(serverCount)) {
                     activeNodeCountText = String(serverCount);
                 } else {
-                    activeNodeCountText = String(activeNodeNames.length);
+                    activeNodeCountText = String(activeNodeItems.length);
                 }
             } else {
                 activeNodeCountText = '0';
@@ -1305,9 +1310,10 @@ adminApp.get('/group/:name', async (req, res) => {
         const ssconfLink = `ssconf://${domainName}/${u.token}.json#QitoVPN_${encodeURIComponent(u.name.replace(/\s+/g, ''))}`;
         const webPanelLink = `https://${panelHost}/panel/${u.token}`; 
         const serverCount = u.accessKeys ? Object.keys(u.accessKeys).length : 0;
+        const currentServerId = u.currentServer || 'None';
         const currentServerLabel = (u.serverLabels && u.currentServer && u.serverLabels[u.currentServer])
             ? u.serverLabels[u.currentServer]
-            : (u.currentServer || 'None');
+            : currentServerId;
         const usagePercent = u.totalGB > 0 ? ((u.usedGB / u.totalGB) * 100).toFixed(1) : 0;
         
         const isHighlighted = (u.token === highlightToken) ? 'bg-yellow-100 border-l-4 border-yellow-500 animate-pulse transition-colors shadow-inner' : 'hover:bg-indigo-50/50';
@@ -1321,7 +1327,10 @@ adminApp.get('/group/:name', async (req, res) => {
             </td>
             <td class="p-4">
                 <span class="bg-slate-200 px-2 py-1 rounded text-[11px] font-black uppercase text-slate-600 mr-2">${serverCount} Nodes</span>
-                <span class="text-sm font-bold text-slate-700">${currentServerLabel}</span>
+                <div class="inline-flex flex-col align-middle">
+                    <span class="text-sm font-bold text-slate-700">${currentServerLabel}</span>
+                    ${currentServerLabel !== currentServerId ? `<span class="text-[11px] font-semibold text-slate-500">ID: ${currentServerId}</span>` : ''}
+                </div>
             </td>
             <td class="p-4 text-sm font-bold text-slate-600">${u.expireDate}</td>
             <td class="p-4 w-48">
@@ -1447,8 +1456,8 @@ adminApp.get('/group/:name', async (req, res) => {
                         <span class="text-xs font-black bg-indigo-100 text-indigo-700 px-3 py-1 rounded-xl border border-indigo-200">Count: ${activeNodeCountText}</span>
                     </div>
                     ${activeNodeError ? `<p class="text-sm text-red-500 font-bold">${activeNodeError}</p>` : ''}
-                    ${activeNodeNames.length > 0
-                        ? `<div class="flex flex-wrap gap-2">${activeNodeNames.map((n) => `<span class="text-xs font-bold bg-slate-100 text-slate-700 px-3 py-1 rounded-xl border border-slate-200">${n}</span>`).join('')}</div>`
+                    ${activeNodeItems.length > 0
+                        ? `<div class="flex flex-wrap gap-2">${activeNodeItems.map((n) => `<span class="text-xs font-bold bg-slate-100 text-slate-700 px-3 py-1 rounded-xl border border-slate-200">${n.label}${n.label !== n.id ? ` <span class='text-slate-500 font-semibold'>(ID: ${n.id})</span>` : ''}</span>`).join('')}</div>`
                         : `<p class="text-sm text-slate-500">No active node list returned for this group.</p>`
                     }
                 </div>
