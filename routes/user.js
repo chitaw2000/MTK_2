@@ -682,11 +682,26 @@ userApp.get('/:token.json', async (req, res) => {
 
         const cachedKey = await redisClient.get(token);
         if (cachedKey) { 
-            try { return res.json(JSON.parse(cachedKey)); } catch (e) { await redisClient.del(token); } 
+            try {
+                const parsed = JSON.parse(cachedKey);
+                const looksLikeExpiredError = !!(parsed && parsed.error && typeof parsed.error === 'object' &&
+                    /package|expire|ကုန်ဆုံး/i.test(String(parsed.error.message || '')));
+                if (!looksLikeExpiredError) {
+                    return res.json(parsed);
+                }
+                await redisClient.del(token);
+            } catch (e) {
+                await redisClient.del(token);
+            } 
         }
 
-        if (user.accessKeys && user.accessKeys[user.currentServer]) {
-            let rawConfig = user.accessKeys[user.currentServer];
+        const allNodeKeys = (user.accessKeys && typeof user.accessKeys === 'object') ? Object.keys(user.accessKeys) : [];
+        const selectedServer = (user.currentServer && user.accessKeys && user.accessKeys[user.currentServer])
+            ? user.currentServer
+            : (allNodeKeys[0] || '');
+
+        if (selectedServer && user.accessKeys && user.accessKeys[selectedServer]) {
+            let rawConfig = user.accessKeys[selectedServer];
             if (typeof rawConfig === 'string' && rawConfig.startsWith('{')) { try { rawConfig = JSON.parse(rawConfig); } catch(e){} }
             if (typeof rawConfig === 'string' && rawConfig.startsWith('ss://')) { return res.json({ server: rawConfig }); }
 
