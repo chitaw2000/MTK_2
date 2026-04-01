@@ -1335,6 +1335,7 @@ adminApp.get('/group/:name', async (req, res) => {
     let activeNodeLabelById = {};
     let activeNodeCountText = 'Unknown';
     let activeNodeError = '';
+    let activeNodeSourceNote = '';
 
     if (groupInfo && groupInfo.masterIp) {
         try {
@@ -1344,19 +1345,20 @@ adminApp.get('/group/:name', async (req, res) => {
                 response = await fetchWithRetry(groupInfo.masterIp + '/api/active-groups', null, {
                     method: 'get',
                     headers: { 'x-api-key': apiKeyHeader },
-                    timeout: 5000
-                }, 1, 300);
+                    timeout: 2800
+                }, 1, 200);
             } catch (e) {
                 response = await fetchWithRetry(groupInfo.masterIp + '/api/active-groups', {}, {
                     method: 'post',
                     headers: { 'x-api-key': apiKeyHeader },
-                    timeout: 5000
-                }, 1, 300);
+                    timeout: 2800
+                }, 1, 200);
             }
 
             const groups = (response && response.data && Array.isArray(response.data.groups)) ? response.data.groups : [];
             const targetGroup = groups.find((g) => String(g.id) === String(groupInfo.masterGroupId)) ||
                 groups.find((g) => String(g.name) === String(groupInfo.name));
+            let nodesFromMasterApiList = false;
             const normalizeNode = (n, fallbackId = '') => {
                 if (typeof n === 'string') return { id: n, label: n };
                 if (!n || typeof n !== 'object') return null;
@@ -1385,41 +1387,12 @@ adminApp.get('/group/:name', async (req, res) => {
                 } else if (typeof rawNodes === 'string' && rawNodes.trim()) {
                     activeNodeItems = rawNodes.split(',').map((s) => s.trim()).filter(Boolean).map((s) => ({ id: s, label: s }));
                 }
-            }
-
-            // Fallback #1: ask master directly for a few existing users' keysets.
-            // This helps when active-groups returns only serverCount without node list.
-            if (activeNodeItems.length === 0) {
-                const liveItems = [];
-                const seenLive = new Set();
-                const probeUsers = users.slice(0, 2);
-                await Promise.all(probeUsers.map(async (u) => {
-                    try {
-                        const editResponse = await fetchWithRetry(groupInfo.masterIp + '/api/internal/edit-user', {
-                            username: u.name,
-                            userName: u.name,
-                            name: u.name,
-                            masterGroupId: groupInfo.masterGroupId,
-                            token: u.token,
-                            userToken: u.token
-                        }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 1800 }, 1, 200);
-                        const liveKeys = pickKeysFromResponsePayload(editResponse && editResponse.data ? editResponse.data : editResponse);
-                        if (!liveKeys || typeof liveKeys !== 'object') return;
-                        for (const nodeKey of Object.keys(liveKeys)) {
-                            const id = String(nodeKey || '').trim();
-                            if (!id || seenLive.has(id)) continue;
-                            seenLive.add(id);
-                            const label = (u.serverLabels && u.serverLabels[id]) ? String(u.serverLabels[id]) : id;
-                            liveItems.push({ id, label });
-                        }
-                    } catch (e) {}
-                }));
-                if (liveItems.length > 0) {
-                    activeNodeItems = liveItems;
+                if (activeNodeItems.length > 0) {
+                    nodesFromMasterApiList = true;
                 }
             }
 
-            // Fallback #2: local DB keys only (last resort).
+            // Fast fallback: union of all users' accessKeys (no extra master HTTP on page load).
             if (activeNodeItems.length === 0) {
                 const fallbackItems = [];
                 const seenFallback = new Set();
@@ -1445,15 +1418,17 @@ adminApp.get('/group/:name', async (req, res) => {
                 return true;
             });
 
-            // Keep only nodes that are currently reachable/online.
-            if (activeNodeItems.length > 0) {
+            // Ping-filter ONLY when master returned an explicit node list (not DB union).
+            // Short timeouts + restore list if ping wipes everything (slow master / flaky ping).
+            if (nodesFromMasterApiList && activeNodeItems.length > 0) {
+                const beforePing = activeNodeItems.slice();
                 const pingActiveSet = new Set();
                 let pingCheckedCount = 0;
-                await Promise.all(activeNodeItems.slice(0, 25).map(async (node) => {
+                await Promise.all(beforePing.slice(0, 20).map(async (node) => {
                     try {
                         const pingRes = await axios.get(`${groupInfo.masterIp}/api/ping/${encodeURIComponent(node.id)}`, {
                             headers: { 'x-api-key': apiKeyHeader },
-                            timeout: 500
+                            timeout: 700
                         });
                         pingCheckedCount += 1;
                         const pingData = pingRes && pingRes.data ? pingRes.data : {};
@@ -1462,7 +1437,8 @@ adminApp.get('/group/:name', async (req, res) => {
                     } catch (e) {}
                 }));
                 if (pingCheckedCount > 0) {
-                    activeNodeItems = activeNodeItems.filter((n) => pingActiveSet.has(String(n.id)));
+                    const filtered = beforePing.filter((n) => pingActiveSet.has(String(n.id)));
+                    activeNodeItems = filtered.length > 0 ? filtered : beforePing;
                 }
             }
 
@@ -1472,6 +1448,11 @@ adminApp.get('/group/:name', async (req, res) => {
             }, {});
             activeNodeIdSet = new Set(activeNodeItems.map((n) => String(n.id)));
             activeNodeCountText = String(activeNodeItems.length);
+            if (nodesFromMasterApiList && activeNodeItems.length > 0) {
+                activeNodeSourceNote = 'Master API node list (online filter when possible).';
+            } else if (activeNodeItems.length > 0) {
+                activeNodeSourceNote = "Union of users' keys in this group (fast). Use Sync Nodes so new master nodes reach all users.";
+            }
         } catch (err) {
             activeNodeError = 'Cannot load nodes from master API right now.';
         }
@@ -1630,6 +1611,7 @@ adminApp.get('/group/:name', async (req, res) => {
                         <h3 class="text-lg font-black text-slate-800"><i class="fas fa-network-wired text-indigo-500 mr-2"></i> Active Nodes from Master</h3>
                         <span class="text-xs font-black bg-indigo-100 text-indigo-700 px-3 py-1 rounded-xl border border-indigo-200">Count: ${activeNodeCountText}</span>
                     </div>
+                    ${activeNodeSourceNote ? `<p class="text-[11px] text-slate-500 font-semibold mb-2">${activeNodeSourceNote}</p>` : ''}
                     ${activeNodeError ? `<p class="text-sm text-red-500 font-bold">${activeNodeError}</p>` : ''}
                     ${activeNodeItems.length > 0
                         ? `<div class="flex flex-wrap gap-2">${activeNodeItems.map((n) => `<span class="text-xs font-bold bg-slate-100 text-slate-700 px-3 py-1 rounded-xl border border-slate-200">${n.label}${n.label !== n.id ? ` <span class='text-slate-500 font-semibold'>(ID: ${n.id})</span>` : ''}</span>`).join('')}</div>`
