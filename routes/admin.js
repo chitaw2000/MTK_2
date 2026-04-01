@@ -1795,19 +1795,15 @@ adminApp.post('/sync-group-nodes', async (req, res) => {
 
                         const masterKeys = pickKeysFromResponsePayload(masterResponse && masterResponse.data ? masterResponse.data : masterResponse);
                         if (masterKeys) {
-                            const updateQuery = {};
-                            for (const [nodeName, nodeConfig] of Object.entries(masterKeys)) {
-                                updateQuery[`accessKeys.${nodeName}`] = nodeConfig;
-                            }
-                            const mergedKeys = {
-                                ...(isPlainObject(user.accessKeys) ? user.accessKeys : {}),
-                                ...masterKeys
+                            const updateQuery = {
+                                accessKeys: masterKeys,
+                                serverLabels: buildServerLabels(masterKeys, user.serverLabels)
                             };
-                            updateQuery.serverLabels = buildServerLabels(mergedKeys, user.serverLabels);
-                            if (!user.currentServer || user.currentServer === "None") {
+                            if (!user.currentServer || user.currentServer === "None" || !masterKeys[user.currentServer]) {
                                 updateQuery.currentServer = Object.keys(masterKeys)[0] || "None";
                             }
                             await User.updateOne({ _id: user._id }, { $set: updateQuery });
+                            try { await redisClient.del(user.token); } catch (e) {}
 
                             try {
                                 await fetchWithRetry(groupInfo.masterIp + '/api/internal/edit-user', {
