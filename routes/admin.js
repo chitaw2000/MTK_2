@@ -1680,8 +1680,19 @@ adminApp.post('/sync-group-nodes', async (req, res) => {
                     let masterKeys = null;
                     try {
                         const masterResponse = await fetchWithRetry(groupInfo.masterIp + '/api/generate-keys', {
-                            masterGroupId: groupInfo.masterGroupId, userName: user.name, totalGB: user.totalGB, expireDate: user.expireDate
-                        }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 8000 });
+                            masterGroupId: groupInfo.masterGroupId,
+                            userName: user.name,
+                            username: user.name,
+                            name: user.name,
+                            totalGB: user.totalGB,
+                            expireDate: user.expireDate,
+                            token: user.token,
+                            userToken: user.token,
+                            allowExisting: true,
+                            updateIfExists: true,
+                            overwrite: true,
+                            regenerate: true
+                        }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 12000 }, 1, 500);
                         masterKeys = pickKeysFromResponsePayload(masterResponse && masterResponse.data ? masterResponse.data : masterResponse);
                     } catch (genErr) {
                         try {
@@ -1695,8 +1706,18 @@ adminApp.post('/sync-group-nodes', async (req, res) => {
                                 masterGroupId: groupInfo.masterGroupId,
                                 token: user.token,
                                 userToken: user.token
-                            }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 7000 });
+                            }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 20000 }, 1, 500);
                             masterKeys = pickKeysFromResponsePayload(editResponse && editResponse.data ? editResponse.data : editResponse);
+
+                            if (!masterKeys) {
+                                const minimalEditResponse = await fetchWithRetry(groupInfo.masterIp + '/api/internal/edit-user', {
+                                    username: user.name,
+                                    userName: user.name,
+                                    name: user.name,
+                                    masterGroupId: groupInfo.masterGroupId
+                                }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 20000 }, 1, 500);
+                                masterKeys = pickKeysFromResponsePayload(minimalEditResponse && minimalEditResponse.data ? minimalEditResponse.data : minimalEditResponse);
+                            }
                         } catch (editErr) {
                             console.log(`❌ edit-user fallback failed for ${user.name}: ${getErrMsg(editErr)}`);
                         }

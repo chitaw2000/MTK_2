@@ -76,19 +76,37 @@ function pickKeysFromResponsePayload(payload) {
 async function fetchExistingUserKeysFallback(user, groupInfo) {
     const apiKeyHeader = groupInfo.masterApiKey || process.env.PANELMASTER_API_KEY;
     try {
-        const editResponse = await fetchWithRetry(groupInfo.masterIp + '/api/internal/edit-user', {
+        const basePayload = {
             username: user.name,
             userName: user.name,
             name: user.name,
             totalGB: user.totalGB,
             usedGB: user.usedGB,
             expireDate: user.expireDate,
-            masterGroupId: groupInfo.masterGroupId
-            ,
+            masterGroupId: groupInfo.masterGroupId,
             token: user.token,
             userToken: user.token
-        }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 7000 });
-        return pickKeysFromResponsePayload(editResponse && editResponse.data ? editResponse.data : editResponse);
+        };
+
+        const editResponse = await fetchWithRetry(groupInfo.masterIp + '/api/internal/edit-user', basePayload, {
+            headers: { 'x-api-key': apiKeyHeader },
+            timeout: 20000
+        }, 1, 500);
+        let keys = pickKeysFromResponsePayload(editResponse && editResponse.data ? editResponse.data : editResponse);
+        if (keys) return keys;
+
+        // Fallback for masters that only need identity to return/update keys.
+        const minimalResponse = await fetchWithRetry(groupInfo.masterIp + '/api/internal/edit-user', {
+            username: user.name,
+            userName: user.name,
+            name: user.name,
+            masterGroupId: groupInfo.masterGroupId
+        }, {
+            headers: { 'x-api-key': apiKeyHeader },
+            timeout: 20000
+        }, 1, 500);
+        keys = pickKeysFromResponsePayload(minimalResponse && minimalResponse.data ? minimalResponse.data : minimalResponse);
+        return keys;
     } catch (e) {
         console.log(`[refresh-fallback] edit-user failed for ${user.name}: ${getErrMsg(e)}`);
         return null;
@@ -120,9 +138,13 @@ async function refreshUserNodesFromMaster(user, groupInfo) {
             userToken: user.token,
             totalGB: user.totalGB,
             expireDate: user.expireDate,
+            allowExisting: true,
+            updateIfExists: true,
+            overwrite: true,
+            regenerate: true,
             forceRefresh: true,
             refreshAt: Date.now()
-        }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 7000 });
+        }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 12000 }, 1, 500);
         masterKeys = pickKeysFromResponsePayload(masterResponse && masterResponse.data ? masterResponse.data : masterResponse);
     } catch (e) {
         console.log(`[refresh-primary] generate-keys failed for ${user.name}: ${getErrMsg(e)}`);
