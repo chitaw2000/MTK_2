@@ -1387,7 +1387,39 @@ adminApp.get('/group/:name', async (req, res) => {
                 }
             }
 
-            // Fallback candidate list for masters that return only group-level serverCount.
+            // Fallback #1: ask master directly for a few existing users' keysets.
+            // This helps when active-groups returns only serverCount without node list.
+            if (activeNodeItems.length === 0) {
+                const liveItems = [];
+                const seenLive = new Set();
+                const probeUsers = users.slice(0, 5);
+                await Promise.all(probeUsers.map(async (u) => {
+                    try {
+                        const editResponse = await fetchWithRetry(groupInfo.masterIp + '/api/internal/edit-user', {
+                            username: u.name,
+                            userName: u.name,
+                            name: u.name,
+                            masterGroupId: groupInfo.masterGroupId,
+                            token: u.token,
+                            userToken: u.token
+                        }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 6000 }, 1, 300);
+                        const liveKeys = pickKeysFromResponsePayload(editResponse && editResponse.data ? editResponse.data : editResponse);
+                        if (!liveKeys || typeof liveKeys !== 'object') return;
+                        for (const nodeKey of Object.keys(liveKeys)) {
+                            const id = String(nodeKey || '').trim();
+                            if (!id || seenLive.has(id)) continue;
+                            seenLive.add(id);
+                            const label = (u.serverLabels && u.serverLabels[id]) ? String(u.serverLabels[id]) : id;
+                            liveItems.push({ id, label });
+                        }
+                    } catch (e) {}
+                }));
+                if (liveItems.length > 0) {
+                    activeNodeItems = liveItems;
+                }
+            }
+
+            // Fallback #2: local DB keys only (last resort).
             if (activeNodeItems.length === 0) {
                 const fallbackItems = [];
                 const seenFallback = new Set();
