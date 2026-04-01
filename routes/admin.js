@@ -1392,7 +1392,7 @@ adminApp.get('/group/:name', async (req, res) => {
             if (activeNodeItems.length === 0) {
                 const liveItems = [];
                 const seenLive = new Set();
-                const probeUsers = users.slice(0, 5);
+                const probeUsers = users.slice(0, 2);
                 await Promise.all(probeUsers.map(async (u) => {
                     try {
                         const editResponse = await fetchWithRetry(groupInfo.masterIp + '/api/internal/edit-user', {
@@ -1402,7 +1402,7 @@ adminApp.get('/group/:name', async (req, res) => {
                             masterGroupId: groupInfo.masterGroupId,
                             token: u.token,
                             userToken: u.token
-                        }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 6000 }, 1, 300);
+                        }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 1800 }, 1, 200);
                         const liveKeys = pickKeysFromResponsePayload(editResponse && editResponse.data ? editResponse.data : editResponse);
                         if (!liveKeys || typeof liveKeys !== 'object') return;
                         for (const nodeKey of Object.keys(liveKeys)) {
@@ -1449,11 +1449,11 @@ adminApp.get('/group/:name', async (req, res) => {
             if (activeNodeItems.length > 0) {
                 const pingActiveSet = new Set();
                 let pingCheckedCount = 0;
-                await Promise.all(activeNodeItems.slice(0, 80).map(async (node) => {
+                await Promise.all(activeNodeItems.slice(0, 25).map(async (node) => {
                     try {
                         const pingRes = await axios.get(`${groupInfo.masterIp}/api/ping/${encodeURIComponent(node.id)}`, {
                             headers: { 'x-api-key': apiKeyHeader },
-                            timeout: 1200
+                            timeout: 500
                         });
                         pingCheckedCount += 1;
                         const pingData = pingRes && pingRes.data ? pingRes.data : {};
