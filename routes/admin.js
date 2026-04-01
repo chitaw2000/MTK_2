@@ -1748,10 +1748,38 @@ adminApp.post('/sync-group-nodes', async (req, res) => {
         const groupName = req.body.groupName;
         const groupInfo = await Group.findOne({ name: groupName });
         if (!groupInfo || !groupInfo.masterIp) return res.redirect('/admin');
+        if (!groupInfo.masterGroupId) return res.status(400).send("Missing masterGroupId for this group.");
 
         const apiKeyHeader = groupInfo.masterApiKey || process.env.PANELMASTER_API_KEY; 
         const users = await User.find({ groupName: groupName });
-        const batchSize = 5;
+        // Keep fan-out conservative to avoid stressing master/xray on bulk sync.
+        const batchSize = 2;
+
+        // Preflight: ensure the configured group exists on master before syncing users.
+        let targetGroupFound = false;
+        try {
+            let activeGroupsResponse;
+            try {
+                activeGroupsResponse = await fetchWithRetry(groupInfo.masterIp + '/api/active-groups', null, {
+                    method: 'get',
+                    headers: { 'x-api-key': apiKeyHeader },
+                    timeout: 7000
+                }, 1, 300);
+            } catch (e) {
+                activeGroupsResponse = await fetchWithRetry(groupInfo.masterIp + '/api/active-groups', {}, {
+                    method: 'post',
+                    headers: { 'x-api-key': apiKeyHeader },
+                    timeout: 7000
+                }, 1, 300);
+            }
+            const groups = (activeGroupsResponse && activeGroupsResponse.data && Array.isArray(activeGroupsResponse.data.groups))
+                ? activeGroupsResponse.data.groups
+                : [];
+            targetGroupFound = groups.some((g) => String(g.id) === String(groupInfo.masterGroupId) || String(g.name) === String(groupInfo.name));
+        } catch (e) {}
+        if (!targetGroupFound) {
+            return res.status(400).send("Master group mapping check failed. Please verify masterGroupId/master connection before sync.");
+        }
         
         for (let i = 0; i < users.length; i += batchSize) {
             const batch = users.slice(i, i + batchSize);
@@ -1769,9 +1797,7 @@ adminApp.post('/sync-group-nodes', async (req, res) => {
                             token: user.token,
                             userToken: user.token,
                             allowExisting: true,
-                            updateIfExists: true,
-                            overwrite: true,
-                            regenerate: true
+                            updateIfExists: true
                         }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 12000 }, 1, 500);
                         masterKeys = pickKeysFromResponsePayload(masterResponse && masterResponse.data ? masterResponse.data : masterResponse);
                     } catch (genErr) {
@@ -1814,15 +1840,6 @@ adminApp.post('/sync-group-nodes', async (req, res) => {
                             updateQuery["currentServer"] = Object.keys(masterKeys)[0] || "None";
                         }
                         await User.updateOne({ _id: user._id }, { $set: updateQuery });
-
-                        try {
-                            await fetchWithRetry(groupInfo.masterIp + '/api/internal/edit-user', {
-                                username: user.name, 
-                                totalGB: user.totalGB, 
-                                usedGB: user.usedGB, 
-                                expireDate: user.expireDate
-                            }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 3000 });
-                        } catch (e) {}
                     }
                 } catch (err) { console.log(`❌ Failed to sync nodes for user: ${user.name} :: ${getErrMsg(err)}`); }
             }));
