@@ -670,8 +670,10 @@ userApp.post('/panel/change-server', async (req, res) => {
 });
 
 // Backward compatibility: some old keys use /<token> (without .json).
-userApp.get('/:token([A-Za-z0-9]{16,64})', async (req, res) => {
-    const token = req.params.token;
+// Keep this broad route safe by validating token format at runtime.
+userApp.get('/:token', async (req, res, next) => {
+    const token = String(req.params.token || '').trim();
+    if (!/^[A-Za-z0-9]{16,64}$/.test(token)) return next();
     return res.redirect(302, `/${token}.json`);
 });
 
