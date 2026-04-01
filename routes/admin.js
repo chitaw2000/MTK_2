@@ -1331,6 +1331,7 @@ adminApp.get('/group/:name', async (req, res) => {
     const safeGroupPanelLabel = groupPanelLabel.replace(/"/g, '&quot;');
     const safeNsRecord = (normalizedGroupHost || ((groupInfo && groupInfo.nsRecord) ? groupInfo.nsRecord : '')).replace(/"/g, '&quot;');
     let activeNodeItems = [];
+    let activeNodeIdSet = new Set();
     let activeNodeLabelById = {};
     let activeNodeCountText = 'Unknown';
     let activeNodeError = '';
@@ -1385,36 +1386,48 @@ adminApp.get('/group/:name', async (req, res) => {
                 } else if (typeof rawNodes === 'string' && rawNodes.trim()) {
                     activeNodeItems = rawNodes.split(',').map((s) => s.trim()).filter(Boolean).map((s) => ({ id: s, label: s }));
                 }
+
+                // De-duplicate node list by ID.
+                const seenNodeIds = new Set();
+                activeNodeItems = activeNodeItems.filter((n) => {
+                    const id = String(n && n.id ? n.id : '').trim();
+                    if (!id || seenNodeIds.has(id)) return false;
+                    seenNodeIds.add(id);
+                    return true;
+                });
+
+                // Keep only nodes that are currently reachable/online.
+                if (activeNodeItems.length > 0) {
+                    const pingActiveSet = new Set();
+                    let pingCheckedCount = 0;
+                    await Promise.all(activeNodeItems.slice(0, 80).map(async (node) => {
+                        try {
+                            const pingRes = await axios.get(`${groupInfo.masterIp}/api/ping/${encodeURIComponent(node.id)}`, {
+                                headers: { 'x-api-key': apiKeyHeader },
+                                timeout: 1200
+                            });
+                            pingCheckedCount += 1;
+                            const pingData = pingRes && pingRes.data ? pingRes.data : {};
+                            const isOnline = pingData.status === 'online' || pingData.online === true || Number.isFinite(Number(pingData.latency_ms));
+                            if (isOnline) pingActiveSet.add(String(node.id));
+                        } catch (e) {}
+                    }));
+                    if (pingCheckedCount > 0) {
+                        activeNodeItems = activeNodeItems.filter((n) => pingActiveSet.has(String(n.id)));
+                    }
+                }
+
                 activeNodeLabelById = activeNodeItems.reduce((acc, n) => {
                     if (n && n.id) acc[String(n.id)] = String(n.label || n.id);
                     return acc;
                 }, {});
-                const serverCount = Number(targetGroup.serverCount);
-                if (Number.isFinite(serverCount)) {
-                    activeNodeCountText = String(serverCount);
-                } else {
-                    activeNodeCountText = String(activeNodeItems.length);
-                }
+                activeNodeIdSet = new Set(activeNodeItems.map((n) => String(n.id)));
+                activeNodeCountText = String(activeNodeItems.length);
             } else {
                 activeNodeCountText = '0';
             }
         } catch (err) {
             activeNodeError = 'Cannot load nodes from master API right now.';
-        }
-    }
-    if (activeNodeItems.length === 0) {
-        const seen = new Set();
-        for (const u of users) {
-            const keys = (u.accessKeys && typeof u.accessKeys === 'object') ? Object.keys(u.accessKeys) : [];
-            for (const key of keys) {
-                if (!key || seen.has(key)) continue;
-                seen.add(key);
-                const label = (u.serverLabels && u.serverLabels[key]) ? String(u.serverLabels[key]) : String(key);
-                activeNodeItems.push({ id: String(key), label });
-            }
-        }
-        if (activeNodeItems.length > 0 && (activeNodeCountText === 'Unknown' || activeNodeCountText === '0')) {
-            activeNodeCountText = String(activeNodeItems.length);
         }
     }
 
@@ -1424,7 +1437,8 @@ adminApp.get('/group/:name', async (req, res) => {
             ? `ssconf://${domainName}/${u.token}.json#QitoVPN_${encodeURIComponent(u.name.replace(/\s+/g, ''))}`
             : '';
         const webPanelLink = panelHost ? `https://${panelHost}/panel/${u.token}` : '';
-        const serverCount = u.accessKeys ? Object.keys(u.accessKeys).length : 0;
+        const userNodeKeys = (u.accessKeys && typeof u.accessKeys === 'object') ? Object.keys(u.accessKeys) : [];
+        const serverCount = userNodeKeys.filter((k) => activeNodeIdSet.has(String(k))).length;
         const currentServerId = u.currentServer || 'None';
         const currentServerLabel = (u.serverLabels && u.currentServer && u.serverLabels[u.currentServer])
             ? u.serverLabels[u.currentServer]

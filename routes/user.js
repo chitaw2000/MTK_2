@@ -408,12 +408,13 @@ userApp.get('/panel/:token', async (req, res) => {
                 const activeClass = isSelected ? 'bg-indigo-900/30 border-l-4 border-indigo-500' : 'hover:bg-slate-800/50';
                 const iconColor = isSelected ? 'text-indigo-400' : 'text-slate-400';
                 const checkIcon = isSelected ? `<i class="fas fa-check-circle text-indigo-500 text-lg"></i>` : `<i class="fas fa-arrow-circle-right text-slate-600 hover:text-slate-400 transition text-lg"></i>`;
+                const disabledButtonClass = isExpired ? 'opacity-60 cursor-not-allowed' : '';
 
                 nodesListHtml += `
                 <form id="form-${safeNodeId}" action="/panel/change-server" method="POST" class="m-0 border-b border-slate-800 last:border-0">
                     <input type="hidden" name="token" value="${token}">
                     <input type="hidden" name="newServer" value="${serverName}">
-                    <button type="button" onclick="confirmSwitch('form-${safeNodeId}', '${safeDisplayName}')" class="w-full flex justify-between items-center p-4 transition-all duration-200 ${activeClass}">
+                    <button type="button" onclick="confirmSwitch('form-${safeNodeId}', '${safeDisplayName}')" class="w-full flex justify-between items-center p-4 transition-all duration-200 ${activeClass} ${disabledButtonClass}">
                         <div class="flex items-center gap-3">
                             <div class="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center border border-slate-700"><i class="fas fa-globe ${iconColor} text-sm"></i></div>
                             <div class="flex flex-col items-start leading-tight">
@@ -560,6 +561,11 @@ userApp.get('/panel/:token', async (req, res) => {
                             sm.classList.remove('hidden'); sm.classList.add('flex');
                             setTimeout(() => { sm.classList.remove('opacity-0'); sc.classList.remove('scale-95'); }, 10);
                             window.history.replaceState({}, document.title, window.location.pathname);
+                            return;
+                        }
+                        if (urlParams.get('expired') === 'true') {
+                            alert('Package expired ဖြစ်နေသောကြောင့် server change မလုပ်နိုင်သေးပါ။ Admin ထံ ဆက်သွယ်ပြီး renew ပြုလုပ်ပါ။');
+                            window.history.replaceState({}, document.title, window.location.pathname);
                         }
                     };
                     function closeSuccessModal() {
@@ -568,6 +574,10 @@ userApp.get('/panel/:token', async (req, res) => {
                         setTimeout(() => { sm.classList.add('hidden'); sm.classList.remove('flex'); }, 300);
                     }
                     function confirmSwitch(formId, serverName) {
+                        if (isExpiredAccount) {
+                            alert('Package expired ဖြစ်နေသောကြောင့် server change မလုပ်နိုင်သေးပါ။ Admin ထံ ဆက်သွယ်ပြီး renew ပြုလုပ်ပါ။');
+                            return;
+                        }
                         currentFormId = formId; document.getElementById('modalServerName').innerText = serverName;
                         const modal = document.getElementById('switchModal'); const content = document.getElementById('modalContent');
                         modal.classList.remove('hidden'); modal.classList.add('flex');
@@ -582,7 +592,6 @@ userApp.get('/panel/:token', async (req, res) => {
                         if(currentFormId) { document.getElementById('confirmBtn').innerHTML = '<i class="fas fa-circle-notch fa-spin text-xl"></i>'; document.getElementById(currentFormId).submit(); }
                     });
                     async function fetchPings() {
-                        if (isExpiredAccount) return;
                         if (nodes.length === 0) return;
                         for(let node of nodes) {
                             try {
@@ -635,6 +644,9 @@ userApp.post('/panel/change-server', async (req, res) => {
         const today = new Date(); today.setHours(0, 0, 0, 0); 
         const expDate = new Date(user.expireDate);
         const isExpired = user.usedGB >= user.totalGB || today > expDate;
+        if (isExpired) {
+            return res.redirect('/panel/' + token + '?expired=true');
+        }
         
         const groupInfo = await findGroupByUserGroupName(user.groupName);
         if (!groupInfo) return res.status(404).send("Group Error");
