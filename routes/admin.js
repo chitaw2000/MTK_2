@@ -832,6 +832,12 @@ adminApp.get('/settings', async (req, res) => {
                                 </button>
                             </div>
                         </form>
+                        <form action="/admin/backfill-server-labels" method="POST" class="m-0 pt-5 border-t border-slate-100">
+                            <button type="submit" class="w-full bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold py-3.5 rounded-2xl transition active:scale-[0.98]">
+                                <i class="fas fa-tags mr-2"></i> Backfill Server Display Names
+                            </button>
+                            <p class="text-[11px] text-slate-500 mt-2 font-semibold">Fills missing node display labels for old users without changing keys.</p>
+                        </form>
                     </div>
 
                     <div class="bg-white p-6 md:p-8 rounded-[2rem] shadow-sm border border-slate-200">
@@ -945,6 +951,39 @@ adminApp.post('/save-telegram-settings', async (req, res) => {
         res.send(`<script>alert('✅ Telegram Settings Saved! 2FA OTP is now active.'); window.location.href='/admin/settings';</script>`);
     } catch(e) { 
         res.status(500).send("Error saving settings"); 
+    }
+});
+
+adminApp.post('/backfill-server-labels', async (req, res) => {
+    try {
+        const users = await User.find({}, { _id: 1, accessKeys: 1, serverLabels: 1 });
+        let changedUsers = 0;
+        let addedLabels = 0;
+
+        for (const user of users) {
+            const keys = user.accessKeys && typeof user.accessKeys === 'object' ? Object.keys(user.accessKeys) : [];
+            if (keys.length === 0) continue;
+
+            const labels = (user.serverLabels && typeof user.serverLabels === 'object') ? { ...user.serverLabels } : {};
+            let changed = false;
+
+            for (const key of keys) {
+                if (!labels[key] || !String(labels[key]).trim()) {
+                    labels[key] = key;
+                    addedLabels++;
+                    changed = true;
+                }
+            }
+
+            if (changed) {
+                await User.updateOne({ _id: user._id }, { $set: { serverLabels: labels } });
+                changedUsers++;
+            }
+        }
+
+        res.send(`<script>alert('✅ Backfill completed. Updated users: ${changedUsers}, labels added: ${addedLabels}'); window.location.href='/admin/settings';</script>`);
+    } catch (e) {
+        res.send(`<script>alert('❌ Backfill failed: ${e.message}'); window.location.href='/admin/settings';</script>`);
     }
 });
 
@@ -1139,6 +1178,26 @@ adminApp.post('/update-group-panel-label', async (req, res) => {
     }
 });
 
+const NS_RECORD_HOST_RE = /^[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?$/;
+
+adminApp.post('/update-group-ns-record', async (req, res) => {
+    try {
+        const groupName = (req.body.groupName || '').toString();
+        let raw = (req.body.nsRecord || '').toString().trim().replace(/^https?:\/\//i, '').split('/')[0];
+        raw = raw.replace(/:\d+$/, '');
+        if (!raw || !NS_RECORD_HOST_RE.test(raw)) {
+            return res.status(400).send('Invalid custom DNS hostname (use e.g. ns1.example.com, no path or spaces).');
+        }
+        const updated = await Group.updateOne({ name: groupName }, { nsRecord: raw });
+        if (updated.matchedCount === 0) {
+            return res.status(404).send('Group not found');
+        }
+        res.redirect('/admin/group/' + encodeURIComponent(groupName));
+    } catch (e) {
+        res.status(500).send('Error updating custom DNS');
+    }
+});
+
 adminApp.post('/delete-group', async (req, res) => {
     try {
         const groupInfo = await Group.findOne({ name: req.body.groupName }); 
@@ -1186,9 +1245,10 @@ adminApp.get('/group/:name', async (req, res) => {
     const masters = await Master.find({}); 
     
     const domainName = (groupInfo && groupInfo.nsRecord) ? groupInfo.nsRecord : (process.env.VPS_IP || req.hostname);
-    const panelHost = process.env.VPS_IP || req.hostname;
+    const panelHost = (groupInfo && groupInfo.nsRecord) ? groupInfo.nsRecord : (process.env.VPS_IP || req.hostname);
     const groupPanelLabel = (groupInfo && groupInfo.panelLabel ? groupInfo.panelLabel : 'Premium').toString();
     const safeGroupPanelLabel = groupPanelLabel.replace(/"/g, '&quot;');
+    const safeNsRecord = ((groupInfo && groupInfo.nsRecord) ? groupInfo.nsRecord : '').replace(/"/g, '&quot;');
     let activeNodeNames = [];
     let activeNodeCountText = 'Unknown';
     let activeNodeError = '';
@@ -1222,7 +1282,7 @@ adminApp.get('/group/:name', async (req, res) => {
                         .map((n) => {
                             if (typeof n === 'string') return n;
                             if (!n || typeof n !== 'object') return '';
-                            return n.name || n.serverName || n.nodeName || n.id || '';
+                            return n.displayName || n.name || n.serverName || n.nodeName || n.id || '';
                         })
                         .filter(Boolean);
                 }
@@ -1245,6 +1305,9 @@ adminApp.get('/group/:name', async (req, res) => {
         const ssconfLink = `ssconf://${domainName}/${u.token}.json#QitoVPN_${encodeURIComponent(u.name.replace(/\s+/g, ''))}`;
         const webPanelLink = `https://${panelHost}/panel/${u.token}`; 
         const serverCount = u.accessKeys ? Object.keys(u.accessKeys).length : 0;
+        const currentServerLabel = (u.serverLabels && u.currentServer && u.serverLabels[u.currentServer])
+            ? u.serverLabels[u.currentServer]
+            : (u.currentServer || 'None');
         const usagePercent = u.totalGB > 0 ? ((u.usedGB / u.totalGB) * 100).toFixed(1) : 0;
         
         const isHighlighted = (u.token === highlightToken) ? 'bg-yellow-100 border-l-4 border-yellow-500 animate-pulse transition-colors shadow-inner' : 'hover:bg-indigo-50/50';
@@ -1258,7 +1321,7 @@ adminApp.get('/group/:name', async (req, res) => {
             </td>
             <td class="p-4">
                 <span class="bg-slate-200 px-2 py-1 rounded text-[11px] font-black uppercase text-slate-600 mr-2">${serverCount} Nodes</span>
-                <span class="text-sm font-bold text-slate-700">${u.currentServer || 'None'}</span>
+                <span class="text-sm font-bold text-slate-700">${currentServerLabel}</span>
             </td>
             <td class="p-4 text-sm font-bold text-slate-600">${u.expireDate}</td>
             <td class="p-4 w-48">
@@ -1368,6 +1431,12 @@ adminApp.get('/group/:name', async (req, res) => {
                             <input type="hidden" name="groupName" value="${groupName}">
                             <input type="text" name="panelLabel" value="${safeGroupPanelLabel}" class="w-full border-2 border-yellow-300 bg-white p-3 rounded-2xl outline-none focus:border-yellow-500 font-bold text-sm text-slate-700 transition" placeholder="Panel badge text">
                             <button type="submit" class="w-full bg-slate-800 text-white rounded-2xl py-3.5 font-bold hover:bg-black transition text-sm shadow-md active:scale-[0.98]">Save Panel Badge</button>
+                        </form>
+                        <form action="/admin/update-group-ns-record" method="POST" class="flex flex-col gap-3 mt-4 pt-4 border-t border-yellow-200">
+                            <label class="text-[11px] font-black text-yellow-800 uppercase tracking-widest">Custom DNS (ssconf + panel links)</label>
+                            <input type="hidden" name="groupName" value="${groupName}">
+                            <input type="text" name="nsRecord" value="${safeNsRecord}" required class="w-full border-2 border-indigo-300 bg-white p-3 rounded-2xl outline-none focus:border-indigo-500 font-mono text-sm text-slate-700 transition" placeholder="e.g. ns1.yourdomain.com">
+                            <button type="submit" class="w-full bg-indigo-600 text-white rounded-2xl py-3.5 font-bold hover:bg-indigo-700 transition text-sm shadow-md active:scale-[0.98]">Save Custom DNS</button>
                         </form>
                     </div>
                 </div>

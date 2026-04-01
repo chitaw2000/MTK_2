@@ -11,6 +11,7 @@ const userSchema = new mongoose.Schema({
     currentServer: String,
     expireDate: String,
     accessKeys: Object,
+    serverLabels: Object,
     userNo: Number // 🌟 မပြောင်းလဲသော ကိုယ်ပိုင် ID 
 });
 

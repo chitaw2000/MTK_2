@@ -112,13 +112,15 @@ userApp.get('/panel/:token', async (req, res) => {
         const ssconfLink = `ssconf://${domainName}/${token}.json#QitoVPN_${encodedName}`; 
 
         let nodesListHtml = '';
-        let nodeNames = []; 
+        let nodeEntries = []; 
         
         if (user.accessKeys && Object.keys(user.accessKeys).length > 0) {
             Object.keys(user.accessKeys).forEach(serverName => {
-                nodeNames.push(serverName);
+                const serverDisplayName = (user.serverLabels && user.serverLabels[serverName]) ? user.serverLabels[serverName] : serverName;
+                const safeDisplayName = String(serverDisplayName).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                const safeNodeId = serverName.replace(/[^a-zA-Z0-9_-]/g, '-');
+                nodeEntries.push({ key: serverName, safeId: safeNodeId });
                 const isSelected = user.currentServer === serverName;
-                const safeNodeId = serverName.replace(/\s+/g, '-');
                 
                 const activeClass = isSelected ? 'bg-indigo-900/30 border-l-4 border-indigo-500' : 'hover:bg-slate-800/50';
                 const iconColor = isSelected ? 'text-indigo-400' : 'text-slate-400';
@@ -128,10 +130,10 @@ userApp.get('/panel/:token', async (req, res) => {
                 <form id="form-${safeNodeId}" action="/panel/change-server" method="POST" class="m-0 border-b border-slate-800 last:border-0">
                     <input type="hidden" name="token" value="${token}">
                     <input type="hidden" name="newServer" value="${serverName}">
-                    <button type="button" onclick="confirmSwitch('form-${safeNodeId}', '${serverName}')" class="w-full flex justify-between items-center p-4 transition-all duration-200 ${activeClass}">
+                    <button type="button" onclick="confirmSwitch('form-${safeNodeId}', '${safeDisplayName}')" class="w-full flex justify-between items-center p-4 transition-all duration-200 ${activeClass}">
                         <div class="flex items-center gap-3">
                             <div class="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center border border-slate-700"><i class="fas fa-globe ${iconColor} text-sm"></i></div>
-                            <span class="font-bold ${isSelected ? 'text-white' : 'text-slate-300'} text-[15px] tracking-wide">${serverName}</span>
+                            <span class="font-bold ${isSelected ? 'text-white' : 'text-slate-300'} text-[15px] tracking-wide">${serverDisplayName}</span>
                         </div>
                         <div class="flex items-center gap-4">
                             <span id="ping-${safeNodeId}" class="text-xs font-semibold text-slate-500 w-16 text-right tracking-wider"><i class="fas fa-circle-notch fa-spin text-slate-600"></i></span>
@@ -192,8 +194,9 @@ userApp.get('/panel/:token', async (req, res) => {
                         </div>
                     </div>
 
-                    <div class="mb-5 ml-1">
-                        <p class="text-sm font-bold text-slate-400">Username: <span class="text-[30px] font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-200 via-yellow-400 to-amber-500 drop-shadow-[0_0_14px_rgba(250,204,21,0.7)] tracking-wide ml-1 uppercase">${user.name}</span></p>
+                    <div class="mb-5 ml-1 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                        <span class="text-2xl sm:text-3xl font-black text-slate-300 tracking-wide">Username:</span>
+                        <span class="text-[30px] font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-200 via-yellow-400 to-amber-500 drop-shadow-[0_0_14px_rgba(250,204,21,0.7)] tracking-wide uppercase">${user.name}</span>
                     </div>
 
                     <div class="bg-[#151f32] rounded-3xl p-6 shadow-xl border border-slate-800 mb-6 relative overflow-hidden">
@@ -261,7 +264,7 @@ userApp.get('/panel/:token', async (req, res) => {
                 </div>
 
                 <script>
-                    const nodes = ${JSON.stringify(nodeNames)}; const token = '${token}'; let currentFormId = '';
+                    const nodes = ${JSON.stringify(nodeEntries)}; const token = '${token}'; let currentFormId = '';
                     window.onload = function() {
                         const urlParams = new URLSearchParams(window.location.search);
                         if (urlParams.get('switched') === 'true') {
@@ -294,15 +297,15 @@ userApp.get('/panel/:token', async (req, res) => {
                         if (nodes.length === 0) return;
                         for(let node of nodes) {
                             try {
-                                let res = await fetch('/panel/api/ping/' + token + '/' + encodeURIComponent(node));
+                                let res = await fetch('/panel/api/ping/' + token + '/' + encodeURIComponent(node.key));
                                 let data = await res.json();
-                                let safeNodeId = node.replace(/\\s+/g, '-'); let pingEl = document.getElementById('ping-' + safeNodeId);
+                                let pingEl = document.getElementById('ping-' + node.safeId);
                                 if(pingEl && data.status === 'online' && data.latency_ms) {
                                     let latency = Math.round(data.latency_ms); let color = latency < 100 ? 'text-green-400' : (latency < 200 ? 'text-yellow-400' : 'text-red-400');
                                     pingEl.innerHTML = \`<span class="\${color} font-bold drop-shadow-[0_0_5px_rgba(0,0,0,0.5)]"><i class="fas fa-signal text-[10px] mr-1"></i>\${latency} ms</span>\`;
                                 } else if (pingEl) { pingEl.innerHTML = '<span class="text-slate-600 font-bold text-[11px] uppercase">Offline</span>'; }
                             } catch(e) {
-                                let safeNodeId = node.replace(/\\s+/g, '-'); let pingEl = document.getElementById('ping-' + safeNodeId);
+                                let pingEl = document.getElementById('ping-' + node.safeId);
                                 if (pingEl) pingEl.innerHTML = '<span class="text-slate-700 text-[11px]">Error</span>';
                             }
                         }
@@ -605,8 +608,21 @@ userApp.get('/admin/api/internal/sync-user-usage/:identifier', requireApiKey, sy
 async function syncNewServerHandler(req, res) {
     try {
         const apiKey = req.headers['x-api-key'];
-        const { masterGroupId, newServerName, userKeys } = req.body;
-        if (!newServerName || !userKeys) return res.status(400).json({ error: "Invalid payload data" });
+        const payload = {
+            ...(req.body || {}),
+            ...((req.body && typeof req.body.data === 'object') ? req.body.data : {})
+        };
+        const lookup = flattenPayload(payload);
+        const masterGroupId = normalizeCandidate(getFirstValue(lookup, ['mastergroupid']));
+        const newServerName = normalizeCandidate(getFirstValue(lookup, ['newservername']));
+        const newServerId = normalizeCandidate(getFirstValue(lookup, ['newserverid']));
+        const newServerDisplayName = normalizeCandidate(getFirstValue(lookup, ['newserverdisplayname']));
+        const userKeys = payload.userKeys && typeof payload.userKeys === 'object' ? payload.userKeys : payload.userkeys;
+        const serverKey = newServerId || newServerName;
+        const serverLabel = newServerDisplayName || serverKey;
+        if (!serverKey || !userKeys || typeof userKeys !== 'object') {
+            return res.status(400).json({ error: "Invalid payload data" });
+        }
 
         const validGroup = await Group.findOne({ masterGroupId: masterGroupId });
         // 🌟 Ensure it checks process.env if Group key doesn't match
@@ -620,7 +636,13 @@ async function syncNewServerHandler(req, res) {
             const user = await User.findOne({ $or: [{ token: identifier }, { name: new RegExp('^' + escapedIdentifier + '$', 'i') }] });
 
             if (user) {
-                await User.updateOne({ _id: user._id }, { $set: { [`accessKeys.${newServerName}`]: newConfig } });
+                const updateQuery = {
+                    [`accessKeys.${serverKey}`]: newConfig
+                };
+                if (serverLabel) {
+                    updateQuery[`serverLabels.${serverKey}`] = serverLabel;
+                }
+                await User.updateOne({ _id: user._id }, { $set: updateQuery });
                 try { await redisClient.del(user.token); } catch(e){}
                 successCount++;
             }
