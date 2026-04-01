@@ -124,6 +124,62 @@ function buildServerLabels(accessKeys, existingLabels) {
     return labels;
 }
 
+function isPlainObject(value) {
+    return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function cloneValue(value) {
+    try {
+        return JSON.parse(JSON.stringify(value));
+    } catch (e) {
+        return value;
+    }
+}
+
+function buildNodeConfigForUser(user, templateConfig) {
+    const template = cloneValue(templateConfig);
+    if (!isPlainObject(template)) return template;
+    const ownValues = isPlainObject(user && user.accessKeys) ? Object.values(user.accessKeys) : [];
+    const ownBase = ownValues.find((v) => isPlainObject(v));
+    if (!ownBase) return template;
+    const carryFields = ['password', 'method', 'prefix', 'id', 'flow', 'encryption', 'security', 'plugin', 'plugin_opts'];
+    for (const field of carryFields) {
+        if (ownBase[field] !== undefined) template[field] = ownBase[field];
+    }
+    return template;
+}
+
+async function backfillUserAccessKeysFromGroupTemplates(user) {
+    if (!user || !user.groupName) return user;
+    const peers = await User.find({ groupName: user.groupName }, { accessKeys: 1, serverLabels: 1 });
+    const templates = {};
+    for (const p of peers) {
+        if (!p || !isPlainObject(p.accessKeys)) continue;
+        for (const [nodeKey, cfg] of Object.entries(p.accessKeys)) {
+            if (!nodeKey || templates[nodeKey] !== undefined) continue;
+            templates[nodeKey] = cloneValue(cfg);
+        }
+    }
+
+    const existing = isPlainObject(user.accessKeys) ? { ...user.accessKeys } : {};
+    let changed = false;
+    for (const [nodeKey, cfg] of Object.entries(templates)) {
+        if (existing[nodeKey] !== undefined) continue;
+        existing[nodeKey] = buildNodeConfigForUser(user, cfg);
+        changed = true;
+    }
+    if (!changed) return user;
+
+    user.accessKeys = existing;
+    user.serverLabels = buildServerLabels(existing, user.serverLabels);
+    if (!user.currentServer || !existing[user.currentServer]) {
+        user.currentServer = Object.keys(existing)[0] || 'None';
+    }
+    await user.save();
+    try { await redisClient.del(user.token); } catch (e) {}
+    return user;
+}
+
 async function refreshUserNodesFromMaster(user, groupInfo) {
     if (!user || !groupInfo || !groupInfo.masterIp || !groupInfo.masterGroupId) return user;
     const apiKeyHeader = groupInfo.masterApiKey || process.env.PANELMASTER_API_KEY;
@@ -291,6 +347,9 @@ userApp.get('/panel/:token', async (req, res) => {
                 await refreshUserNodesFromMaster(user, group);
             } catch (e) {}
         }
+        try {
+            await backfillUserAccessKeysFromGroupTemplates(user);
+        } catch (e) {}
         let nodeLabelMap = {};
         if (group && group.masterIp && group.masterGroupId) {
             try { nodeLabelMap = await fetchGroupNodeLabelMap(group); } catch (e) {}
