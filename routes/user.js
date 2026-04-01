@@ -53,6 +53,30 @@ async function fetchWithRetry(url, data, config, retries = 3, delay = 1000) {
     }
 }
 
+function pickKeysFromResponsePayload(payload) {
+    if (!payload || typeof payload !== 'object') return null;
+    if (payload.keys && typeof payload.keys === 'object') return payload.keys;
+    if (payload.data && payload.data.keys && typeof payload.data.keys === 'object') return payload.data.keys;
+    if (payload.user && payload.user.keys && typeof payload.user.keys === 'object') return payload.user.keys;
+    return null;
+}
+
+async function fetchExistingUserKeysFallback(user, groupInfo) {
+    const apiKeyHeader = groupInfo.masterApiKey || process.env.PANELMASTER_API_KEY;
+    try {
+        const editResponse = await fetchWithRetry(groupInfo.masterIp + '/api/internal/edit-user', {
+            username: user.name,
+            totalGB: user.totalGB,
+            usedGB: user.usedGB,
+            expireDate: user.expireDate,
+            masterGroupId: groupInfo.masterGroupId
+        }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 7000 });
+        return pickKeysFromResponsePayload(editResponse && editResponse.data ? editResponse.data : editResponse);
+    } catch (e) {
+        return null;
+    }
+}
+
 function buildServerLabels(accessKeys, existingLabels) {
     const labels = {};
     const source = (existingLabels && typeof existingLabels === 'object') ? existingLabels : {};
@@ -67,22 +91,24 @@ function buildServerLabels(accessKeys, existingLabels) {
 async function refreshUserNodesFromMaster(user, groupInfo) {
     if (!user || !groupInfo || !groupInfo.masterIp || !groupInfo.masterGroupId) return user;
     const apiKeyHeader = groupInfo.masterApiKey || process.env.PANELMASTER_API_KEY;
-    const masterResponse = await fetchWithRetry(groupInfo.masterIp + '/api/generate-keys', {
-        masterGroupId: groupInfo.masterGroupId,
-        userName: user.name,
-        username: user.name,
-        name: user.name,
-        token: user.token,
-        userToken: user.token,
-        totalGB: user.totalGB,
-        expireDate: user.expireDate,
-        forceRefresh: true,
-        refreshAt: Date.now()
-    }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 7000 });
-
-    const masterKeys = (masterResponse && masterResponse.data && masterResponse.data.keys && typeof masterResponse.data.keys === 'object')
-        ? masterResponse.data.keys
-        : null;
+    let masterKeys = null;
+    try {
+        const masterResponse = await fetchWithRetry(groupInfo.masterIp + '/api/generate-keys', {
+            masterGroupId: groupInfo.masterGroupId,
+            userName: user.name,
+            username: user.name,
+            name: user.name,
+            token: user.token,
+            userToken: user.token,
+            totalGB: user.totalGB,
+            expireDate: user.expireDate,
+            forceRefresh: true,
+            refreshAt: Date.now()
+        }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 7000 });
+        masterKeys = pickKeysFromResponsePayload(masterResponse && masterResponse.data ? masterResponse.data : masterResponse);
+    } catch (e) {
+        masterKeys = await fetchExistingUserKeysFallback(user, groupInfo);
+    }
     if (!masterKeys) return user;
 
     user.accessKeys = masterKeys;

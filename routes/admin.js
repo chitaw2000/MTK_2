@@ -343,6 +343,14 @@ async function fetchWithRetry(url, data, config, retries = 3, delay = 1000) {
     }
 }
 
+function pickKeysFromResponsePayload(payload) {
+    if (!payload || typeof payload !== 'object') return null;
+    if (payload.keys && typeof payload.keys === 'object') return payload.keys;
+    if (payload.data && payload.data.keys && typeof payload.data.keys === 'object') return payload.data.keys;
+    if (payload.user && payload.user.keys && typeof payload.user.keys === 'object') return payload.user.keys;
+    return null;
+}
+
 function normalizeMasterBaseUrl(value) {
     let url = String(value || '').trim();
     if (!url) return '';
@@ -1657,12 +1665,25 @@ adminApp.post('/sync-group-nodes', async (req, res) => {
             const batch = users.slice(i, i + batchSize);
             await Promise.all(batch.map(async (user) => {
                 try {
-                    const masterResponse = await fetchWithRetry(groupInfo.masterIp + '/api/generate-keys', {
-                        masterGroupId: groupInfo.masterGroupId, userName: user.name, totalGB: user.totalGB, expireDate: user.expireDate
-                    }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 8000 });
-
-                    if (masterResponse.data && masterResponse.data.keys) {
-                        const masterKeys = masterResponse.data.keys;
+                    let masterKeys = null;
+                    try {
+                        const masterResponse = await fetchWithRetry(groupInfo.masterIp + '/api/generate-keys', {
+                            masterGroupId: groupInfo.masterGroupId, userName: user.name, totalGB: user.totalGB, expireDate: user.expireDate
+                        }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 8000 });
+                        masterKeys = pickKeysFromResponsePayload(masterResponse && masterResponse.data ? masterResponse.data : masterResponse);
+                    } catch (genErr) {
+                        try {
+                            const editResponse = await fetchWithRetry(groupInfo.masterIp + '/api/internal/edit-user', {
+                                username: user.name,
+                                totalGB: user.totalGB,
+                                usedGB: user.usedGB,
+                                expireDate: user.expireDate,
+                                masterGroupId: groupInfo.masterGroupId
+                            }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 7000 });
+                            masterKeys = pickKeysFromResponsePayload(editResponse && editResponse.data ? editResponse.data : editResponse);
+                        } catch (editErr) {}
+                    }
+                    if (masterKeys) {
                         const updateQuery = {
                             accessKeys: masterKeys,
                             serverLabels: buildServerLabels(masterKeys, user.serverLabels)
