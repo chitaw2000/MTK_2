@@ -726,13 +726,11 @@ userApp.get('/:token.json', async (req, res) => {
             if (typeof rawConfig === 'string' && rawConfig.startsWith('{')) { try { rawConfig = JSON.parse(rawConfig); } catch(e){} }
             if (typeof rawConfig === 'string' && rawConfig.startsWith('ss://')) { return res.json({ server: rawConfig }); }
 
-            if (typeof rawConfig === 'object' && rawConfig.server) { 
-                rawConfig = { 
-                    server: rawConfig.server, 
-                    server_port: Number(rawConfig.server_port), 
-                    password: rawConfig.password, 
-                    method: rawConfig.method
-                }; 
+            // Keep full master-issued config fields (e.g. prefix/plugin/security).
+            // Trimming to only {server,port,password,method} can break connectivity on some nodes.
+            if (rawConfig && typeof rawConfig === 'object' && rawConfig.server_port !== undefined) {
+                const portNum = Number(rawConfig.server_port);
+                if (Number.isFinite(portNum)) rawConfig.server_port = portNum;
             }
             await redisClient.setEx(token, 300, JSON.stringify(rawConfig));
             return res.json(rawConfig);
