@@ -1357,17 +1357,16 @@ adminApp.get('/group/:name', async (req, res) => {
             const groups = (response && response.data && Array.isArray(response.data.groups)) ? response.data.groups : [];
             const targetGroup = groups.find((g) => String(g.id) === String(groupInfo.masterGroupId)) ||
                 groups.find((g) => String(g.name) === String(groupInfo.name));
+            const normalizeNode = (n, fallbackId = '') => {
+                if (typeof n === 'string') return { id: n, label: n };
+                if (!n || typeof n !== 'object') return null;
+                const id = n.id || n.serverId || n.nodeId || n.key || fallbackId || n.name || n.serverName || n.nodeName || '';
+                const label = n.displayName || n.name || n.serverName || n.nodeName || n.title || id || '';
+                if (!id && !label) return null;
+                return { id: String(id || label), label: String(label || id) };
+            };
 
             if (targetGroup) {
-                const normalizeNode = (n, fallbackId = '') => {
-                    if (typeof n === 'string') return { id: n, label: n };
-                    if (!n || typeof n !== 'object') return null;
-                    const id = n.id || n.serverId || n.nodeId || n.key || fallbackId || n.name || n.serverName || n.nodeName || '';
-                    const label = n.displayName || n.name || n.serverName || n.nodeName || n.title || id || '';
-                    if (!id && !label) return null;
-                    return { id: String(id || label), label: String(label || id) };
-                };
-
                 const rawNodes =
                     targetGroup.activeNodes ??
                     targetGroup.nodes ??
@@ -1386,46 +1385,61 @@ adminApp.get('/group/:name', async (req, res) => {
                 } else if (typeof rawNodes === 'string' && rawNodes.trim()) {
                     activeNodeItems = rawNodes.split(',').map((s) => s.trim()).filter(Boolean).map((s) => ({ id: s, label: s }));
                 }
+            }
 
-                // De-duplicate node list by ID.
-                const seenNodeIds = new Set();
-                activeNodeItems = activeNodeItems.filter((n) => {
-                    const id = String(n && n.id ? n.id : '').trim();
-                    if (!id || seenNodeIds.has(id)) return false;
-                    seenNodeIds.add(id);
-                    return true;
-                });
-
-                // Keep only nodes that are currently reachable/online.
-                if (activeNodeItems.length > 0) {
-                    const pingActiveSet = new Set();
-                    let pingCheckedCount = 0;
-                    await Promise.all(activeNodeItems.slice(0, 80).map(async (node) => {
-                        try {
-                            const pingRes = await axios.get(`${groupInfo.masterIp}/api/ping/${encodeURIComponent(node.id)}`, {
-                                headers: { 'x-api-key': apiKeyHeader },
-                                timeout: 1200
-                            });
-                            pingCheckedCount += 1;
-                            const pingData = pingRes && pingRes.data ? pingRes.data : {};
-                            const isOnline = pingData.status === 'online' || pingData.online === true || Number.isFinite(Number(pingData.latency_ms));
-                            if (isOnline) pingActiveSet.add(String(node.id));
-                        } catch (e) {}
-                    }));
-                    if (pingCheckedCount > 0) {
-                        activeNodeItems = activeNodeItems.filter((n) => pingActiveSet.has(String(n.id)));
+            // Fallback candidate list for masters that return only group-level serverCount.
+            if (activeNodeItems.length === 0) {
+                const fallbackItems = [];
+                const seenFallback = new Set();
+                for (const u of users) {
+                    const keys = (u.accessKeys && typeof u.accessKeys === 'object') ? Object.keys(u.accessKeys) : [];
+                    for (const key of keys) {
+                        const id = String(key || '').trim();
+                        if (!id || seenFallback.has(id)) continue;
+                        seenFallback.add(id);
+                        const label = (u.serverLabels && u.serverLabels[id]) ? String(u.serverLabels[id]) : id;
+                        fallbackItems.push({ id, label });
                     }
                 }
-
-                activeNodeLabelById = activeNodeItems.reduce((acc, n) => {
-                    if (n && n.id) acc[String(n.id)] = String(n.label || n.id);
-                    return acc;
-                }, {});
-                activeNodeIdSet = new Set(activeNodeItems.map((n) => String(n.id)));
-                activeNodeCountText = String(activeNodeItems.length);
-            } else {
-                activeNodeCountText = '0';
+                activeNodeItems = fallbackItems;
             }
+
+            // De-duplicate node list by ID.
+            const seenNodeIds = new Set();
+            activeNodeItems = activeNodeItems.filter((n) => {
+                const id = String(n && n.id ? n.id : '').trim();
+                if (!id || seenNodeIds.has(id)) return false;
+                seenNodeIds.add(id);
+                return true;
+            });
+
+            // Keep only nodes that are currently reachable/online.
+            if (activeNodeItems.length > 0) {
+                const pingActiveSet = new Set();
+                let pingCheckedCount = 0;
+                await Promise.all(activeNodeItems.slice(0, 80).map(async (node) => {
+                    try {
+                        const pingRes = await axios.get(`${groupInfo.masterIp}/api/ping/${encodeURIComponent(node.id)}`, {
+                            headers: { 'x-api-key': apiKeyHeader },
+                            timeout: 1200
+                        });
+                        pingCheckedCount += 1;
+                        const pingData = pingRes && pingRes.data ? pingRes.data : {};
+                        const isOnline = pingData.status === 'online' || pingData.online === true || Number.isFinite(Number(pingData.latency_ms));
+                        if (isOnline) pingActiveSet.add(String(node.id));
+                    } catch (e) {}
+                }));
+                if (pingCheckedCount > 0) {
+                    activeNodeItems = activeNodeItems.filter((n) => pingActiveSet.has(String(n.id)));
+                }
+            }
+
+            activeNodeLabelById = activeNodeItems.reduce((acc, n) => {
+                if (n && n.id) acc[String(n.id)] = String(n.label || n.id);
+                return acc;
+            }, {});
+            activeNodeIdSet = new Set(activeNodeItems.map((n) => String(n.id)));
+            activeNodeCountText = String(activeNodeItems.length);
         } catch (err) {
             activeNodeError = 'Cannot load nodes from master API right now.';
         }
