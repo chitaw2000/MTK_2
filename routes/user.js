@@ -53,6 +53,18 @@ async function fetchWithRetry(url, data, config, retries = 3, delay = 1000) {
     }
 }
 
+function getErrMsg(err) {
+    if (!err) return 'Unknown error';
+    if (err.response && err.response.data) {
+        const d = err.response.data;
+        if (typeof d === 'string') return d;
+        if (d.error) return String(d.error);
+        if (d.message) return String(d.message);
+        try { return JSON.stringify(d); } catch (e) {}
+    }
+    return err.message || String(err);
+}
+
 function pickKeysFromResponsePayload(payload) {
     if (!payload || typeof payload !== 'object') return null;
     if (payload.keys && typeof payload.keys === 'object') return payload.keys;
@@ -66,13 +78,19 @@ async function fetchExistingUserKeysFallback(user, groupInfo) {
     try {
         const editResponse = await fetchWithRetry(groupInfo.masterIp + '/api/internal/edit-user', {
             username: user.name,
+            userName: user.name,
+            name: user.name,
             totalGB: user.totalGB,
             usedGB: user.usedGB,
             expireDate: user.expireDate,
             masterGroupId: groupInfo.masterGroupId
+            ,
+            token: user.token,
+            userToken: user.token
         }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 7000 });
         return pickKeysFromResponsePayload(editResponse && editResponse.data ? editResponse.data : editResponse);
     } catch (e) {
+        console.log(`[refresh-fallback] edit-user failed for ${user.name}: ${getErrMsg(e)}`);
         return null;
     }
 }
@@ -107,6 +125,7 @@ async function refreshUserNodesFromMaster(user, groupInfo) {
         }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 7000 });
         masterKeys = pickKeysFromResponsePayload(masterResponse && masterResponse.data ? masterResponse.data : masterResponse);
     } catch (e) {
+        console.log(`[refresh-primary] generate-keys failed for ${user.name}: ${getErrMsg(e)}`);
         masterKeys = await fetchExistingUserKeysFallback(user, groupInfo);
     }
     if (!masterKeys) return user;

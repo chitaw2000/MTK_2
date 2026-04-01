@@ -343,6 +343,18 @@ async function fetchWithRetry(url, data, config, retries = 3, delay = 1000) {
     }
 }
 
+function getErrMsg(err) {
+    if (!err) return 'Unknown error';
+    if (err.response && err.response.data) {
+        const d = err.response.data;
+        if (typeof d === 'string') return d;
+        if (d.error) return String(d.error);
+        if (d.message) return String(d.message);
+        try { return JSON.stringify(d); } catch (e) {}
+    }
+    return err.message || String(err);
+}
+
 function pickKeysFromResponsePayload(payload) {
     if (!payload || typeof payload !== 'object') return null;
     if (payload.keys && typeof payload.keys === 'object') return payload.keys;
@@ -1675,13 +1687,22 @@ adminApp.post('/sync-group-nodes', async (req, res) => {
                         try {
                             const editResponse = await fetchWithRetry(groupInfo.masterIp + '/api/internal/edit-user', {
                                 username: user.name,
+                                userName: user.name,
+                                name: user.name,
                                 totalGB: user.totalGB,
                                 usedGB: user.usedGB,
                                 expireDate: user.expireDate,
-                                masterGroupId: groupInfo.masterGroupId
+                                masterGroupId: groupInfo.masterGroupId,
+                                token: user.token,
+                                userToken: user.token
                             }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 7000 });
                             masterKeys = pickKeysFromResponsePayload(editResponse && editResponse.data ? editResponse.data : editResponse);
-                        } catch (editErr) {}
+                        } catch (editErr) {
+                            console.log(`❌ edit-user fallback failed for ${user.name}: ${getErrMsg(editErr)}`);
+                        }
+                        if (!masterKeys) {
+                            console.log(`❌ generate-keys failed for ${user.name}: ${getErrMsg(genErr)}`);
+                        }
                     }
                     if (masterKeys) {
                         const updateQuery = {
@@ -1702,7 +1723,7 @@ adminApp.post('/sync-group-nodes', async (req, res) => {
                             }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 3000 });
                         } catch (e) {}
                     }
-                } catch (err) { console.log(`❌ Failed to sync nodes for user: ${user.name}`); }
+                } catch (err) { console.log(`❌ Failed to sync nodes for user: ${user.name} :: ${getErrMsg(err)}`); }
             }));
         }
         res.redirect('/admin/group/' + encodeURIComponent(groupName));
