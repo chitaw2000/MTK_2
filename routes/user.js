@@ -410,9 +410,6 @@ userApp.get('/panel/:token', async (req, res) => {
                     ? user.serverLabels[serverName]
                     : (nodeLabelMap[serverName] || toDisplayNodeName(serverName));
                 const safeDisplayName = String(serverDisplayName).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-                const safeConfirmLabel = String(serverDisplayName === serverName ? serverDisplayName : `${serverDisplayName} (${serverName})`)
-                    .replace(/\\/g, '\\\\')
-                    .replace(/'/g, "\\'");
                 const safeNodeId = serverName.replace(/[^a-zA-Z0-9_-]/g, '-');
                 nodeEntries.push({ key: serverName, safeId: safeNodeId });
                 const isSelected = user.currentServer === serverName;
@@ -425,7 +422,7 @@ userApp.get('/panel/:token', async (req, res) => {
                 <form id="form-${safeNodeId}" action="/panel/change-server" method="POST" class="m-0 border-b border-slate-800 last:border-0">
                     <input type="hidden" name="token" value="${token}">
                     <input type="hidden" name="newServer" value="${serverName}">
-                    <button type="button" onclick="confirmSwitch('form-${safeNodeId}', '${safeConfirmLabel}')" class="w-full flex justify-between items-center p-4 transition-all duration-200 ${activeClass}">
+                    <button type="button" onclick="confirmSwitch('form-${safeNodeId}', '${safeDisplayName}')" class="w-full flex justify-between items-center p-4 transition-all duration-200 ${activeClass}">
                         <div class="flex items-center gap-3">
                             <div class="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center border border-slate-700"><i class="fas fa-globe ${iconColor} text-sm"></i></div>
                             <div class="flex flex-col items-start leading-tight">
@@ -681,27 +678,7 @@ userApp.get('/:token.json', async (req, res) => {
         const expDate = new Date(user.expireDate);
         const isExpired = user.usedGB >= user.totalGB || today > expDate;
 
-        const hardBlockExpired = String(process.env.BLOCK_EXPIRED_SUBSCRIPTION || 'false').toLowerCase() === 'true';
-        // Optional hard block for expired users. Default is soft mode (subscription still readable).
-        if (isExpired && hardBlockExpired) {
-            const errorJson = {
-                "error": {
-                    "message": "⛔️ ဝယ်ယူထားသော Package မှာကုန်ဆုံးသွားပြီဖြစ်ပါတယ်။ Admin ထံ ဆက်သွယ်ပြီး Package အသစ်ဝယ်ယူနိုင်ပါတယ်။",
-                    "details": "Package ဝယ်ယူရန် http://t.me/qitoadmin သို့မဟုတ် http://m.me/qitotechmm ကိုဆက်သွယ်နိုင်ပါတယ်။\n\nQITO Tech Premium VPN မှ အကောင်းဆုံး ဝန်ဆောင်မှုများ ဆက်လက်ပေးရန် အဆင်သင့်ရှိနေပါသည်။"
-                }
-            };
-            try {
-                const groupInfo = await Group.findOne({ name: user.groupName });
-                if (groupInfo && groupInfo.masterIp) {
-                    const apiKeyHeader = groupInfo.masterApiKey || process.env.PANELMASTER_API_KEY;
-                    axios.post(groupInfo.masterIp + '/api/internal/block-user', { username: user.name }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 2000 }).catch(() => {});
-                }
-            } catch (e) {}
-
-            res.setHeader('Access-Control-Allow-Origin', '*');
-            res.setHeader('Content-Type', 'application/json; charset=utf-8');
-            return res.status(200).send(JSON.stringify(errorJson)); 
-        }
+        // Keep subscription link readable even when usage/date is expired.
 
         const cachedKey = await redisClient.get(token);
         if (cachedKey) { 
