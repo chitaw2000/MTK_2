@@ -266,7 +266,6 @@ userApp.get('/panel/:token', async (req, res) => {
                             <div class="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center border border-slate-700"><i class="fas fa-globe ${iconColor} text-sm"></i></div>
                             <div class="flex flex-col items-start leading-tight">
                                 <span class="font-bold ${isSelected ? 'text-white' : 'text-slate-300'} text-[15px] tracking-wide">${serverDisplayName}</span>
-                                ${serverDisplayName !== serverName ? `<span class="text-[11px] font-semibold text-slate-500 tracking-wide">ID: ${serverName}</span>` : ''}
                             </div>
                         </div>
                         <div class="flex items-center gap-4">
@@ -583,6 +582,17 @@ function toDisplayNodeName(value) {
         .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+function extractLikelyToken(identifier) {
+    const raw = String(identifier || '').trim();
+    if (!raw) return '';
+    const jsonMatch = raw.match(/\/([A-Za-z0-9]{16,64})\.json/i);
+    if (jsonMatch) return jsonMatch[1];
+    const panelMatch = raw.match(/\/panel\/([A-Za-z0-9]{16,64})/i);
+    if (panelMatch) return panelMatch[1];
+    if (/^[A-Za-z0-9]{16,64}$/.test(raw)) return raw;
+    return '';
+}
+
 function flattenPayload(input, out = {}) {
     if (!input || typeof input !== 'object') return out;
     for (const [k, v] of Object.entries(input)) {
@@ -803,13 +813,17 @@ async function syncNewServerHandler(req, res) {
         for (const [identifierRaw, newConfig] of Object.entries(userConfigMap)) {
             const identifier = String(identifierRaw || '').trim();
             const escapedIdentifier = identifier.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const likelyToken = extractLikelyToken(identifier);
             let user =
                 byToken.get(identifier) ||
+                (likelyToken ? byToken.get(likelyToken) : null) ||
                 byNameExact.get(identifier.toLowerCase()) ||
                 byNameLoose.get(normalizeLooseIdentity(identifier));
 
             if (!user) {
-                user = await User.findOne({ $or: [{ token: identifier }, { name: new RegExp('^' + escapedIdentifier + '$', 'i') }] });
+                const queryOr = [{ token: identifier }, { name: new RegExp('^' + escapedIdentifier + '$', 'i') }];
+                if (likelyToken) queryOr.unshift({ token: likelyToken });
+                user = await User.findOne({ $or: queryOr });
             }
 
             if (user) {
