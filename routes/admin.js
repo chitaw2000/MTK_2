@@ -373,9 +373,10 @@ function normalizeMasterBaseUrl(value) {
 }
 
 function normalizeHost(value) {
-    const raw = String(value || '').trim();
+    const raw = String(value || '').trim().replace(/^['"`]+|['"`]+$/g, '');
     if (!raw) return '';
-    return raw.replace(/^https?:\/\//i, '').split('/')[0].replace(/:\d+$/, '').trim();
+    const withoutScheme = raw.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '');
+    return withoutScheme.split('/')[0].replace(/:\d+$/, '').trim().replace(/\.$/, '');
 }
 
 function buildServerLabels(accessKeys, existingLabels) {
@@ -1225,12 +1226,16 @@ adminApp.post('/delete-all-masters', async (req, res) => {
 adminApp.post('/create-group', async (req, res) => {
     try {
         const { groupName, masterGroupId, nsRecord, masterIp, masterApiKey, masterName, panelLabel } = req.body;
-        if (groupName && masterGroupId && nsRecord && masterIp && masterApiKey) { 
+        const cleanNsRecord = normalizeHost(nsRecord);
+        if (groupName && masterGroupId && cleanNsRecord && masterIp && masterApiKey) { 
+            if (!NS_RECORD_HOST_RE.test(cleanNsRecord)) {
+                return res.status(400).send("Invalid custom DNS hostname");
+            }
             let cleanIp = normalizeMasterBaseUrl(masterIp);
             await Group.create({
                 name: groupName,
                 masterGroupId,
-                nsRecord,
+                nsRecord: cleanNsRecord,
                 masterIp: cleanIp,
                 masterApiKey,
                 masterName: masterName || "1",
@@ -1259,8 +1264,7 @@ const NS_RECORD_HOST_RE = /^[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?$/;
 adminApp.post('/update-group-ns-record', async (req, res) => {
     try {
         const groupName = (req.body.groupName || '').toString();
-        let raw = (req.body.nsRecord || '').toString().trim().replace(/^https?:\/\//i, '').split('/')[0];
-        raw = raw.replace(/:\d+$/, '');
+        const raw = normalizeHost(req.body.nsRecord);
         if (!raw || !NS_RECORD_HOST_RE.test(raw)) {
             return res.status(400).send('Invalid custom DNS hostname (use e.g. ns1.example.com, no path or spaces).');
         }
@@ -1321,11 +1325,11 @@ adminApp.get('/group/:name', async (req, res) => {
     const masters = await Master.find({}); 
     
     const normalizedGroupHost = normalizeHost(groupInfo && groupInfo.nsRecord);
-    const domainName = normalizedGroupHost || req.hostname;
-    const panelHost = normalizedGroupHost || req.hostname;
+    const domainName = normalizedGroupHost || '';
+    const panelHost = normalizedGroupHost || '';
     const groupPanelLabel = (groupInfo && groupInfo.panelLabel ? groupInfo.panelLabel : 'Premium').toString();
     const safeGroupPanelLabel = groupPanelLabel.replace(/"/g, '&quot;');
-    const safeNsRecord = ((groupInfo && groupInfo.nsRecord) ? groupInfo.nsRecord : '').replace(/"/g, '&quot;');
+    const safeNsRecord = (normalizedGroupHost || ((groupInfo && groupInfo.nsRecord) ? groupInfo.nsRecord : '')).replace(/"/g, '&quot;');
     let activeNodeItems = [];
     let activeNodeLabelById = {};
     let activeNodeCountText = 'Unknown';
@@ -1416,8 +1420,10 @@ adminApp.get('/group/:name', async (req, res) => {
 
     let usersHtml = '';
     users.forEach((u) => {
-        const ssconfLink = `ssconf://${domainName}/${u.token}.json#QitoVPN_${encodeURIComponent(u.name.replace(/\s+/g, ''))}`;
-        const webPanelLink = `https://${panelHost}/panel/${u.token}`; 
+        const ssconfLink = domainName
+            ? `ssconf://${domainName}/${u.token}.json#QitoVPN_${encodeURIComponent(u.name.replace(/\s+/g, ''))}`
+            : '';
+        const webPanelLink = panelHost ? `https://${panelHost}/panel/${u.token}` : '';
         const serverCount = u.accessKeys ? Object.keys(u.accessKeys).length : 0;
         const currentServerId = u.currentServer || 'None';
         const currentServerLabel = (u.serverLabels && u.currentServer && u.serverLabels[u.currentServer])

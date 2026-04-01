@@ -320,7 +320,7 @@ userApp.get('/panel/api/ping/:token/:nodeName', async (req, res) => {
         const { token, nodeName } = req.params;
         const user = await User.findOne({ token: token });
         if (!user) return res.json({ status: 'offline' });
-        const group = await Group.findOne({ name: user.groupName });
+        const group = await findGroupByUserGroupName(user.groupName);
         if (!group || !group.masterIp) return res.json({ status: 'offline' });
 
         const apiKeyHeader = group.masterApiKey || process.env.PANELMASTER_API_KEY;
@@ -363,7 +363,7 @@ userApp.get('/panel/:token', async (req, res) => {
         const user = await User.findOne({ token: token });
         if(!user) return res.status(404).send("User not found or Invalid Token!");
 
-        const group = await Group.findOne({ name: user.groupName });
+        const group = await findGroupByUserGroupName(user.groupName);
         // Avoid blocking panel render with heavy master refresh calls.
         try {
             await backfillUserAccessKeysFromGroupTemplates(user, group);
@@ -372,14 +372,16 @@ userApp.get('/panel/:token', async (req, res) => {
         if (group && group.masterIp && group.masterGroupId) {
             try { nodeLabelMap = await fetchGroupNodeLabelMap(group); } catch (e) {}
         }
-        const domainName = normalizeHost(group && group.nsRecord) || req.hostname;
+        const domainName = normalizeHost(group && group.nsRecord) || '';
 
         const today = new Date(); today.setHours(0, 0, 0, 0); 
         const expDate = new Date(user.expireDate);
         const isExpired = user.usedGB >= user.totalGB || today > expDate;
 
         const encodedName = encodeURIComponent(user.name.replace(/\s+/g, ''));
-        const ssconfLink = `ssconf://${domainName}/${token}.json#QitoVPN_${encodedName}`; 
+        const ssconfLink = domainName
+            ? `ssconf://${domainName}/${token}.json#QitoVPN_${encodedName}`
+            : ''; 
 
         let nodesListHtml = '';
         let nodeEntries = []; 
@@ -634,7 +636,7 @@ userApp.post('/panel/change-server', async (req, res) => {
         const expDate = new Date(user.expireDate);
         const isExpired = user.usedGB >= user.totalGB || today > expDate;
         
-        const groupInfo = await Group.findOne({ name: user.groupName });
+        const groupInfo = await findGroupByUserGroupName(user.groupName);
         if (!groupInfo) return res.status(404).send("Group Error");
 
         const apiKeyHeader = groupInfo.masterApiKey || process.env.PANELMASTER_API_KEY;
@@ -742,9 +744,19 @@ function toDisplayNodeName(value) {
 }
 
 function normalizeHost(value) {
-    const raw = String(value || '').trim();
+    const raw = String(value || '').trim().replace(/^['"`]+|['"`]+$/g, '');
     if (!raw) return '';
-    return raw.replace(/^https?:\/\//i, '').split('/')[0].replace(/:\d+$/, '').trim();
+    const withoutScheme = raw.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '');
+    return withoutScheme.split('/')[0].replace(/:\d+$/, '').trim().replace(/\.$/, '');
+}
+
+async function findGroupByUserGroupName(groupName) {
+    const raw = String(groupName || '').trim();
+    if (!raw) return null;
+    const direct = await Group.findOne({ name: raw });
+    if (direct) return direct;
+    const escaped = raw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return Group.findOne({ name: { $regex: `^${escaped}$`, $options: 'i' } });
 }
 
 function extractLikelyToken(identifier) {
