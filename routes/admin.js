@@ -372,6 +372,12 @@ function normalizeMasterBaseUrl(value) {
     return url.replace(/\/$/, '');
 }
 
+function normalizeHost(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    return raw.replace(/^https?:\/\//i, '').split('/')[0].replace(/:\d+$/, '').trim();
+}
+
 function buildServerLabels(accessKeys, existingLabels) {
     const labels = {};
     const source = (existingLabels && typeof existingLabels === 'object') ? existingLabels : {};
@@ -1314,8 +1320,9 @@ adminApp.get('/group/:name', async (req, res) => {
     const users = await User.find({ groupName: groupName }).sort({ userNo: 1 }); 
     const masters = await Master.find({}); 
     
-    const domainName = (groupInfo && groupInfo.nsRecord) ? groupInfo.nsRecord : (process.env.VPS_IP || req.hostname);
-    const panelHost = (groupInfo && groupInfo.nsRecord) ? groupInfo.nsRecord : (process.env.VPS_IP || req.hostname);
+    const normalizedGroupHost = normalizeHost(groupInfo && groupInfo.nsRecord);
+    const domainName = normalizedGroupHost || req.hostname;
+    const panelHost = normalizedGroupHost || req.hostname;
     const groupPanelLabel = (groupInfo && groupInfo.panelLabel ? groupInfo.panelLabel : 'Premium').toString();
     const safeGroupPanelLabel = groupPanelLabel.replace(/"/g, '&quot;');
     const safeNsRecord = ((groupInfo && groupInfo.nsRecord) ? groupInfo.nsRecord : '').replace(/"/g, '&quot;');

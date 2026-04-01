@@ -372,7 +372,7 @@ userApp.get('/panel/:token', async (req, res) => {
         if (group && group.masterIp && group.masterGroupId) {
             try { nodeLabelMap = await fetchGroupNodeLabelMap(group); } catch (e) {}
         }
-        const domainName = (group && group.nsRecord) ? group.nsRecord : req.hostname;
+        const domainName = normalizeHost(group && group.nsRecord) || req.hostname;
 
         const today = new Date(); today.setHours(0, 0, 0, 0); 
         const expDate = new Date(user.expireDate);
@@ -666,7 +666,18 @@ userApp.get('/:token.json', async (req, res) => {
         const expDate = new Date(user.expireDate);
         const isExpired = user.usedGB >= user.totalGB || today > expDate;
 
-        // Keep subscription link readable even when usage/date is expired.
+        // Outline-app friendly subscription error for expired users.
+        if (isExpired) {
+            const errorJson = {
+                error: {
+                    message: "⛔️ ဝယ်ယူထားသော Package မှာကုန်ဆုံးသွားပြီဖြစ်ပါတယ်။ Admin ထံ ဆက်သွယ်ပြီး Package အသစ်ဝယ်ယူနိုင်ပါတယ်။",
+                    details: "Package ဝယ်ယူရန် http://t.me/qitoadmin သို့မဟုတ် http://m.me/qitotechmm ကိုဆက်သွယ်နိုင်ပါတယ်။\n\nQITO Tech Premium VPN မှ အကောင်းဆုံး ဝန်ဆောင်မှုများ ဆက်လက်ပေးရန် အဆင်သင့်ရှိနေပါသည်။"
+                }
+            };
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader('Content-Type', 'application/json; charset=utf-8');
+            return res.status(200).send(JSON.stringify(errorJson));
+        }
 
         const cachedKey = await redisClient.get(token);
         if (cachedKey) { 
@@ -728,6 +739,12 @@ function toDisplayNodeName(value) {
         .replace(/\s+/g, ' ')
         .trim()
         .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function normalizeHost(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    return raw.replace(/^https?:\/\//i, '').split('/')[0].replace(/:\d+$/, '').trim();
 }
 
 function extractLikelyToken(identifier) {
