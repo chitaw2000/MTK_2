@@ -53,6 +53,26 @@ async function fetchWithRetry(url, data, config, retries = 3, delay = 1000) {
     }
 }
 
+async function getActiveNodeProbe(groupInfo, nodeKeys = []) {
+    const result = { activeKeys: new Set(), checkedCount: 0 };
+    if (!groupInfo || !groupInfo.masterIp || !Array.isArray(nodeKeys) || nodeKeys.length === 0) return result;
+    const apiKeyHeader = groupInfo.masterApiKey || process.env.PANELMASTER_API_KEY;
+
+    await Promise.all(nodeKeys.map(async (nodeKey) => {
+        try {
+            const response = await axios.get(`${groupInfo.masterIp}/api/ping/${encodeURIComponent(nodeKey)}`, {
+                headers: { 'x-api-key': apiKeyHeader },
+                timeout: 1800
+            });
+            result.checkedCount += 1;
+            const data = response && response.data ? response.data : {};
+            const isOnline = data.status === 'online' || data.online === true || Number.isFinite(Number(data.latency_ms));
+            if (isOnline) result.activeKeys.add(nodeKey);
+        } catch (e) {}
+    }));
+    return result;
+}
+
 function getErrMsg(err) {
     if (!err) return 'Unknown error';
     if (err.response && err.response.data) {
@@ -149,7 +169,7 @@ function buildNodeConfigForUser(user, templateConfig) {
     return template;
 }
 
-async function backfillUserAccessKeysFromGroupTemplates(user) {
+async function backfillUserAccessKeysFromGroupTemplates(user, groupInfo) {
     if (!user || !user.groupName) return user;
     const peers = await User.find({ groupName: user.groupName }, { accessKeys: 1, serverLabels: 1 });
     const templates = {};
@@ -158,6 +178,15 @@ async function backfillUserAccessKeysFromGroupTemplates(user) {
         for (const [nodeKey, cfg] of Object.entries(p.accessKeys)) {
             if (!nodeKey || templates[nodeKey] !== undefined) continue;
             templates[nodeKey] = cloneValue(cfg);
+        }
+    }
+
+    if (groupInfo && groupInfo.masterIp) {
+        const probe = await getActiveNodeProbe(groupInfo, Object.keys(templates));
+        if (probe.checkedCount > 0) {
+            for (const key of Object.keys(templates)) {
+                if (!probe.activeKeys.has(key)) delete templates[key];
+            }
         }
     }
 
@@ -348,7 +377,7 @@ userApp.get('/panel/:token', async (req, res) => {
             } catch (e) {}
         }
         try {
-            await backfillUserAccessKeysFromGroupTemplates(user);
+            await backfillUserAccessKeysFromGroupTemplates(user, group);
         } catch (e) {}
         let nodeLabelMap = {};
         if (group && group.masterIp && group.masterGroupId) {
@@ -367,7 +396,16 @@ userApp.get('/panel/:token', async (req, res) => {
         let nodeEntries = []; 
         
         if (user.accessKeys && Object.keys(user.accessKeys).length > 0) {
-            Object.keys(user.accessKeys).forEach(serverName => {
+            let renderNodeKeys = Object.keys(user.accessKeys);
+            if (group && group.masterIp && renderNodeKeys.length > 0) {
+                try {
+                    const probe = await getActiveNodeProbe(group, renderNodeKeys);
+                    if (probe.checkedCount > 0) {
+                        renderNodeKeys = renderNodeKeys.filter((k) => probe.activeKeys.has(k));
+                    }
+                } catch (e) {}
+            }
+            renderNodeKeys.forEach(serverName => {
                 const serverDisplayName = (user.serverLabels && user.serverLabels[serverName])
                     ? user.serverLabels[serverName]
                     : (nodeLabelMap[serverName] || toDisplayNodeName(serverName));
@@ -401,6 +439,9 @@ userApp.get('/panel/:token', async (req, res) => {
                     </button>
                 </form>`;
             });
+            if (renderNodeKeys.length === 0) {
+                nodesListHtml = `<div class="p-6 text-center text-slate-500 font-medium">No Active Servers Available</div>`;
+            }
         } else { nodesListHtml = `<div class="p-6 text-center text-slate-500 font-medium">No Servers Available</div>`; }
 
         const usagePercent = user.totalGB > 0 ? ((user.usedGB / user.totalGB) * 100).toFixed(1) : 0;
@@ -640,8 +681,9 @@ userApp.get('/:token.json', async (req, res) => {
         const expDate = new Date(user.expireDate);
         const isExpired = user.usedGB >= user.totalGB || today > expDate;
 
-        // 🌟 200 OK + Outline Native Error JSON
-        if (isExpired) {
+        const hardBlockExpired = String(process.env.BLOCK_EXPIRED_SUBSCRIPTION || 'false').toLowerCase() === 'true';
+        // Optional hard block for expired users. Default is soft mode (subscription still readable).
+        if (isExpired && hardBlockExpired) {
             const errorJson = {
                 "error": {
                     "message": "⛔️ ဝယ်ယူထားသော Package မှာကုန်ဆုံးသွားပြီဖြစ်ပါတယ်။ Admin ထံ ဆက်သွယ်ပြီး Package အသစ်ဝယ်ယူနိုင်ပါတယ်။",
