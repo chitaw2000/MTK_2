@@ -355,8 +355,7 @@ userApp.get('/panel/:token', async (req, res) => {
         if(!user) return res.status(404).send("User not found or Invalid Token!");
 
         const group = await findGroupByUserGroupName(user.groupName);
-        // Try to refresh from master first; fallback to local template backfill.
-        try { await refreshUserNodesFromMaster(user, group); } catch (e) {}
+        // Local-only backfill from group peers (no master API call on panel load).
         try { await backfillUserAccessKeysFromGroupTemplates(user, group); } catch (e) {}
         let nodeLabelMap = {};
         if (group && group.masterIp && group.masterGroupId) {
@@ -1095,12 +1094,7 @@ async function syncNewServerHandler(req, res) {
                 unmatchedCount++;
             }
         }
-        let refreshedSummary = { refreshed: 0, failed: 0 };
-        if (validGroup) {
-            try {
-                refreshedSummary = await refreshGroupUsersFromMaster(validGroup, 5);
-            } catch (e) {}
-        }
+        const refreshedSummary = { refreshed: 0, failed: 0 };
         console.log('[sync-new-server] completed', {
             masterGroupId,
             groupName: validGroup ? validGroup.name : null,
