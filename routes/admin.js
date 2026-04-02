@@ -1427,6 +1427,7 @@ adminApp.get('/group/:name', async (req, res) => {
             if (nodesFromMasterApiList && activeNodeItems.length > 0) {
                 const beforePing = activeNodeItems.slice();
                 const pingActiveSet = new Set();
+                const pingCheckedSet = new Set();
                 let pingCheckedCount = 0;
                 await Promise.all(beforePing.slice(0, 20).map(async (node) => {
                     try {
@@ -1434,6 +1435,7 @@ adminApp.get('/group/:name', async (req, res) => {
                             headers: { 'x-api-key': apiKeyHeader },
                             timeout: 700
                         });
+                        pingCheckedSet.add(String(node.id));
                         pingCheckedCount += 1;
                         const pingData = pingRes && pingRes.data ? pingRes.data : {};
                         const isOnline = pingData.status === 'online' || pingData.online === true || Number.isFinite(Number(pingData.latency_ms));
@@ -1441,7 +1443,11 @@ adminApp.get('/group/:name', async (req, res) => {
                     } catch (e) {}
                 }));
                 if (pingCheckedCount > 0) {
-                    const filtered = beforePing.filter((n) => pingActiveSet.has(String(n.id)));
+                    // Do not hide nodes that were not checked by ping.
+                    const filtered = beforePing.filter((n) => {
+                        const id = String(n && n.id ? n.id : '');
+                        return !pingCheckedSet.has(id) || pingActiveSet.has(id);
+                    });
                     activeNodeItems = filtered.length > 0 ? filtered : beforePing;
                 }
             }

@@ -54,7 +54,7 @@ async function fetchWithRetry(url, data, config, retries = 3, delay = 1000) {
 }
 
 async function getActiveNodeProbe(groupInfo, nodeKeys = []) {
-    const result = { activeKeys: new Set(), checkedCount: 0 };
+    const result = { activeKeys: new Set(), checkedKeys: new Set(), checkedCount: 0 };
     if (!groupInfo || !groupInfo.masterIp || !Array.isArray(nodeKeys) || nodeKeys.length === 0) return result;
     const apiKeyHeader = groupInfo.masterApiKey || process.env.PANELMASTER_API_KEY;
     const candidates = nodeKeys.slice(0, 20); // keep panel render snappy on huge groups
@@ -65,6 +65,7 @@ async function getActiveNodeProbe(groupInfo, nodeKeys = []) {
                 headers: { 'x-api-key': apiKeyHeader },
                 timeout: 600
             });
+            result.checkedKeys.add(String(nodeKey));
             result.checkedCount += 1;
             const data = response && response.data ? response.data : {};
             const isOnline = data.status === 'online' || data.online === true || Number.isFinite(Number(data.latency_ms));
@@ -382,7 +383,8 @@ userApp.get('/panel/:token', async (req, res) => {
         if (user.accessKeys && Object.keys(user.accessKeys).length > 0) {
             let renderNodeKeys = Object.keys(user.accessKeys);
             if (activeProbe.checkedCount > 0) {
-                renderNodeKeys = renderNodeKeys.filter((k) => activeProbe.activeKeys.has(k));
+                // Keep nodes that were not ping-checked to avoid hiding new keys on large lists.
+                renderNodeKeys = renderNodeKeys.filter((k) => !activeProbe.checkedKeys.has(k) || activeProbe.activeKeys.has(k));
             }
             renderNodeKeys.forEach(serverName => {
                 const rawSavedLabel = (user.serverLabels && user.serverLabels[serverName]) ? String(user.serverLabels[serverName]).trim() : '';
