@@ -960,6 +960,8 @@ async function syncNewServerHandler(req, res) {
         const newServerName = normalizeCandidate(getFirstValue(lookup, ['newservername']));
         const newServerId = normalizeCandidate(getFirstValue(lookup, ['newserverid']));
         const newServerDisplayName = normalizeCandidate(getFirstValue(lookup, ['newserverdisplayname']));
+        const webhookVersion = normalizeCandidate(getFirstValue(lookup, ['version', 'webhookversion', 'syncversion']));
+        const webhookEventAt = normalizeCandidate(getFirstValue(lookup, ['at', 'eventat', 'updatedat', 'timestamp']));
         const userKeys = payload.userKeys && typeof payload.userKeys === 'object' ? payload.userKeys : payload.userkeys;
         const serverKey = newServerId || newServerName;
         const serverLabel = newServerDisplayName || serverKey;
@@ -971,6 +973,7 @@ async function syncNewServerHandler(req, res) {
             method: req.method,
             masterGroupId,
             groupName,
+            webhookVersion,
             serverKey,
             serverLabel,
             userKeyEntries: approxUserKeyEntries
@@ -1019,6 +1022,19 @@ async function syncNewServerHandler(req, res) {
             });
             return res.status(400).json({ error: 'groupName does not match masterGroupId mapping' });
         }
+        try {
+            await Group.updateOne(
+                { _id: validGroup._id },
+                {
+                    $set: {
+                        lastWebhookVersion: webhookVersion || '',
+                        lastWebhookServerId: serverKey || '',
+                        lastWebhookReceivedAt: new Date(),
+                        lastWebhookEventAt: webhookEventAt || ''
+                    }
+                }
+            );
+        } catch (e) {}
 
         const normalizedServerPayload =
             userKeys && typeof userKeys === 'object' && !Array.isArray(userKeys)
@@ -1088,6 +1104,7 @@ async function syncNewServerHandler(req, res) {
         console.log('[sync-new-server] completed', {
             masterGroupId,
             groupName: validGroup ? validGroup.name : null,
+            webhookVersion,
             serverKey,
             successCount,
             unmatchedCount,

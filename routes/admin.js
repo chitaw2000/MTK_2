@@ -1488,12 +1488,33 @@ adminApp.get('/group/:name', async (req, res) => {
     const groupPanelLabel = (groupInfo && groupInfo.panelLabel ? groupInfo.panelLabel : 'Premium').toString();
     const safeGroupPanelLabel = groupPanelLabel.replace(/"/g, '&quot;');
     const safeNsRecord = (normalizedGroupHost || ((groupInfo && groupInfo.nsRecord) ? groupInfo.nsRecord : '')).replace(/"/g, '&quot;');
+    const webhookVersionText = String((groupInfo && groupInfo.lastWebhookVersion) ? groupInfo.lastWebhookVersion : '').trim();
+    const webhookServerIdText = String((groupInfo && groupInfo.lastWebhookServerId) ? groupInfo.lastWebhookServerId : '').trim();
+    const webhookEventAtText = String((groupInfo && groupInfo.lastWebhookEventAt) ? groupInfo.lastWebhookEventAt : '').trim();
+    const webhookReceivedAtText = (groupInfo && groupInfo.lastWebhookReceivedAt)
+        ? new Date(groupInfo.lastWebhookReceivedAt).toISOString()
+        : '';
     let activeNodeItems = [];
     let activeNodeIdSet = new Set();
     let activeNodeLabelById = {};
     let activeNodeCountText = 'Unknown';
     let activeNodeError = '';
     let activeNodeSourceNote = '';
+    const buildFallbackActiveNodes = () => {
+        const fallbackItems = [];
+        const seenFallback = new Set();
+        for (const u of users) {
+            const keys = (u.accessKeys && typeof u.accessKeys === 'object') ? Object.keys(u.accessKeys) : [];
+            for (const key of keys) {
+                const id = String(key || '').trim();
+                if (!id || seenFallback.has(id)) continue;
+                seenFallback.add(id);
+                const label = (u.serverLabels && u.serverLabels[id]) ? String(u.serverLabels[id]) : id;
+                fallbackItems.push({ id, label });
+            }
+        }
+        return fallbackItems;
+    };
 
     if (groupInfo && groupInfo.masterIp) {
         try {
@@ -1556,19 +1577,7 @@ adminApp.get('/group/:name', async (req, res) => {
 
             // Fast fallback: union of all users' accessKeys (no extra master HTTP on page load).
             if (activeNodeItems.length === 0) {
-                const fallbackItems = [];
-                const seenFallback = new Set();
-                for (const u of users) {
-                    const keys = (u.accessKeys && typeof u.accessKeys === 'object') ? Object.keys(u.accessKeys) : [];
-                    for (const key of keys) {
-                        const id = String(key || '').trim();
-                        if (!id || seenFallback.has(id)) continue;
-                        seenFallback.add(id);
-                        const label = (u.serverLabels && u.serverLabels[id]) ? String(u.serverLabels[id]) : id;
-                        fallbackItems.push({ id, label });
-                    }
-                }
-                activeNodeItems = fallbackItems;
+                activeNodeItems = buildFallbackActiveNodes();
             }
 
             // De-duplicate node list by ID.
@@ -1622,7 +1631,19 @@ adminApp.get('/group/:name', async (req, res) => {
                 activeNodeSourceNote = "Union of users' keys in this group (fast). Use Sync Nodes so new master nodes reach all users.";
             }
         } catch (err) {
-            activeNodeError = 'Cannot load nodes from master API right now.';
+            activeNodeItems = buildFallbackActiveNodes();
+            activeNodeLabelById = activeNodeItems.reduce((acc, n) => {
+                if (n && n.id) acc[String(n.id)] = String(n.label || n.id);
+                return acc;
+            }, {});
+            activeNodeIdSet = new Set(activeNodeItems.map((n) => String(n.id)));
+            activeNodeCountText = String(activeNodeItems.length);
+            if (activeNodeItems.length > 0) {
+                activeNodeSourceNote = "Master API unavailable; showing users' keys in this group.";
+                activeNodeError = '';
+            } else {
+                activeNodeError = 'Cannot load nodes from master API right now.';
+            }
         }
     }
 
@@ -1779,6 +1800,15 @@ adminApp.get('/group/:name', async (req, res) => {
                         <h3 class="text-lg font-black text-slate-800"><i class="fas fa-network-wired text-indigo-500 mr-2"></i> Active Nodes from Master</h3>
                         <span class="text-xs font-black bg-indigo-100 text-indigo-700 px-3 py-1 rounded-xl border border-indigo-200">Count: ${activeNodeCountText}</span>
                     </div>
+                    ${(webhookVersionText || webhookReceivedAtText || webhookServerIdText)
+                        ? `<div class="mb-2 text-[11px] font-semibold text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+                            <span class="mr-3">Webhook Version: <span class="font-black text-slate-800">${webhookVersionText || '-'}</span></span>
+                            <span class="mr-3">Last Server ID: <span class="font-black text-slate-800">${webhookServerIdText || '-'}</span></span>
+                            <span class="mr-3">Event At: <span class="font-black text-slate-800">${webhookEventAtText || '-'}</span></span>
+                            <span>Received At: <span class="font-black text-slate-800">${webhookReceivedAtText || '-'}</span></span>
+                        </div>`
+                        : `<div class="mb-2 text-[11px] font-semibold text-slate-500">Webhook Version: -</div>`
+                    }
                     ${activeNodeSourceNote ? `<p class="text-[11px] text-slate-500 font-semibold mb-2">${activeNodeSourceNote}</p>` : ''}
                     ${activeNodeError ? `<p class="text-sm text-red-500 font-bold">${activeNodeError}</p>` : ''}
                     ${activeNodeItems.length > 0
