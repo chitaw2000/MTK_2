@@ -475,9 +475,53 @@ async function syncGroupUsersFromMaster(groupInfo, opts = {}) {
     const apiKeyHeader = groupInfo.masterApiKey || process.env.PANELMASTER_API_KEY;
     const users = await User.find({ groupName: groupInfo.name });
     const safeMode = opts.safeMode !== false;
-    const allowEditUserFallback = opts.allowEditUserFallback === true && !safeMode;
-    const pushQuotaToMaster = opts.pushQuotaToMaster === true && !safeMode;
-    const batchSize = Number(opts.batchSize) > 0 ? Number(opts.batchSize) : (safeMode ? 1 : 2);
+
+    // ── Safe mode: local-only backfill (zero Master API calls, zero xray impact) ──
+    if (safeMode) {
+        const allNodeKeys = {};
+        for (const u of users) {
+            if (u.accessKeys && typeof u.accessKeys === 'object') {
+                for (const [nodeKey, cfg] of Object.entries(u.accessKeys)) {
+                    if (!nodeKey || allNodeKeys[nodeKey]) continue;
+                    try { allNodeKeys[nodeKey] = JSON.parse(JSON.stringify(cfg)); } catch (e) { allNodeKeys[nodeKey] = cfg; }
+                }
+            }
+        }
+        let syncedUsers = 0;
+        let failedUsers = 0;
+        for (const user of users) {
+            try {
+                const existing = (user.accessKeys && typeof user.accessKeys === 'object') ? { ...user.accessKeys } : {};
+                let changed = false;
+                for (const [nodeKey, templateCfg] of Object.entries(allNodeKeys)) {
+                    if (existing[nodeKey] !== undefined) continue;
+                    const built = buildNodeConfigForUser(user, templateCfg);
+                    existing[nodeKey] = built;
+                    changed = true;
+                }
+                if (changed) {
+                    await User.updateOne({ _id: user._id }, {
+                        $set: {
+                            accessKeys: existing,
+                            serverLabels: buildServerLabels(existing, user.serverLabels),
+                            ...( (!user.currentServer || !existing[user.currentServer]) ? { currentServer: Object.keys(existing)[0] || 'None' } : {} )
+                        }
+                    });
+                    try { await redisClient.del(user.token); } catch (e) {}
+                }
+                syncedUsers++;
+            } catch (err) {
+                failedUsers++;
+                console.log(`[sync-safe] backfill failed for ${user.name}: ${getErrMsg(err)}`);
+            }
+        }
+        return { groupName: groupInfo.name, totalUsers: users.length, syncedUsers, failedUsers, expectedNodeCount: Object.keys(allNodeKeys).length };
+    }
+
+    // ── Non-safe mode: full Master API sync (generate-keys) ──
+    const allowEditUserFallback = opts.allowEditUserFallback === true;
+    const pushQuotaToMaster = opts.pushQuotaToMaster === true;
+    const batchSize = Number(opts.batchSize) > 0 ? Number(opts.batchSize) : 2;
     let expectedGroupNodeIds = new Set();
 
     let targetGroupFound = false;
@@ -517,64 +561,47 @@ async function syncGroupUsersFromMaster(groupInfo, opts = {}) {
         const batch = users.slice(i, i + batchSize);
         await Promise.all(batch.map(async (user) => {
             try {
-                let masterKeys = null;
+                const masterResponse = await fetchWithRetry(groupInfo.masterIp + '/api/generate-keys', {
+                    masterGroupId: groupInfo.masterGroupId,
+                    userName: user.name,
+                    totalGB: user.totalGB,
+                    expireDate: user.expireDate,
+                }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 8000 }, 1, 500);
+                let masterKeys = pickKeysFromResponsePayload(masterResponse && masterResponse.data ? masterResponse.data : masterResponse);
 
-                if (safeMode) {
-                    // Safe mode: read-only fetch via edit-user (no user creation, no GB overwrite, no xray touch).
+                const existingCount = (user.accessKeys && typeof user.accessKeys === 'object') ? Object.keys(user.accessKeys).length : 0;
+                const currentCount = (masterKeys && typeof masterKeys === 'object') ? Object.keys(masterKeys).length : 0;
+                const currentKeySet = new Set((masterKeys && typeof masterKeys === 'object') ? Object.keys(masterKeys).map((k) => String(k)) : []);
+                const missingExpectedNodes = expectedGroupNodeIds.size > 0
+                    ? Array.from(expectedGroupNodeIds).some((id) => !currentKeySet.has(String(id)))
+                    : false;
+
+                if (allowEditUserFallback && (!masterKeys || currentCount <= existingCount || missingExpectedNodes)) {
                     try {
                         const editResponse = await fetchWithRetry(groupInfo.masterIp + '/api/internal/edit-user', {
                             username: user.name,
                             userName: user.name,
                             name: user.name,
-                            masterGroupId: groupInfo.masterGroupId
+                            masterGroupId: groupInfo.masterGroupId,
+                            token: user.token,
+                            userToken: user.token
                         }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 10000 }, 1, 500);
-                        masterKeys = pickKeysFromResponsePayload(editResponse && editResponse.data ? editResponse.data : editResponse);
-                    } catch (e) {
-                        console.log(`[sync-safe] edit-user read-only failed for ${user.name}: ${getErrMsg(e)}`);
-                    }
-                } else {
-                    const masterResponse = await fetchWithRetry(groupInfo.masterIp + '/api/generate-keys', {
-                        masterGroupId: groupInfo.masterGroupId,
-                        userName: user.name,
-                        totalGB: user.totalGB,
-                        expireDate: user.expireDate,
-                    }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 8000 }, 1, 500);
-                    masterKeys = pickKeysFromResponsePayload(masterResponse && masterResponse.data ? masterResponse.data : masterResponse);
-
-                    const existingCount = (user.accessKeys && typeof user.accessKeys === 'object') ? Object.keys(user.accessKeys).length : 0;
-                    const currentCount = (masterKeys && typeof masterKeys === 'object') ? Object.keys(masterKeys).length : 0;
-                    const currentKeySet = new Set((masterKeys && typeof masterKeys === 'object') ? Object.keys(masterKeys).map((k) => String(k)) : []);
-                    const missingExpectedNodes = expectedGroupNodeIds.size > 0
-                        ? Array.from(expectedGroupNodeIds).some((id) => !currentKeySet.has(String(id)))
-                        : false;
-
-                    if (allowEditUserFallback && (!masterKeys || currentCount <= existingCount || missingExpectedNodes)) {
-                        try {
-                            const editResponse = await fetchWithRetry(groupInfo.masterIp + '/api/internal/edit-user', {
-                                username: user.name,
-                                userName: user.name,
-                                name: user.name,
-                                masterGroupId: groupInfo.masterGroupId,
-                                token: user.token,
-                                userToken: user.token
-                            }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 10000 }, 1, 500);
-                            const fallbackKeys = pickKeysFromResponsePayload(editResponse && editResponse.data ? editResponse.data : editResponse);
-                            const fallbackCount = (fallbackKeys && typeof fallbackKeys === 'object') ? Object.keys(fallbackKeys).length : 0;
-                            if (fallbackKeys && fallbackCount >= currentCount) {
-                                masterKeys = fallbackKeys;
-                            }
-                        } catch (e) {}
-                    }
-
-                    if (pushQuotaToMaster && masterKeys) try {
-                        await fetchWithRetry(groupInfo.masterIp + '/api/internal/edit-user', {
-                            username: user.name,
-                            totalGB: user.totalGB,
-                            usedGB: user.usedGB,
-                            expireDate: user.expireDate
-                        }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 3000 });
+                        const fallbackKeys = pickKeysFromResponsePayload(editResponse && editResponse.data ? editResponse.data : editResponse);
+                        const fallbackCount = (fallbackKeys && typeof fallbackKeys === 'object') ? Object.keys(fallbackKeys).length : 0;
+                        if (fallbackKeys && fallbackCount >= currentCount) {
+                            masterKeys = fallbackKeys;
+                        }
                     } catch (e) {}
                 }
+
+                if (pushQuotaToMaster && masterKeys) try {
+                    await fetchWithRetry(groupInfo.masterIp + '/api/internal/edit-user', {
+                        username: user.name,
+                        totalGB: user.totalGB,
+                        usedGB: user.usedGB,
+                        expireDate: user.expireDate
+                    }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 3000 });
+                } catch (e) {}
 
                 if (masterKeys && typeof masterKeys === 'object' && Object.keys(masterKeys).length > 0) {
                     const updateQuery = {
