@@ -474,15 +474,14 @@ async function syncGroupUsersFromMaster(groupInfo, opts = {}) {
 
     const apiKeyHeader = groupInfo.masterApiKey || process.env.PANELMASTER_API_KEY;
     const users = await User.find({ groupName: groupInfo.name });
-    const safeMode = opts.safeMode !== false;
-    const throttleMs = Number(opts.throttleMs) > 0 ? Number(opts.throttleMs) : 2000;
+    const throttleMs = Number(opts.throttleMs) > 0 ? Number(opts.throttleMs) : 5000;
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
     let syncedUsers = 0;
     let failedUsers = 0;
     let skippedExisting = 0;
 
-    // Step 1: Throttled generate-keys — one user at a time, with delay between each.
+    // Step 1: Throttled generate-keys — one user at a time, 5s gap for xray to settle.
     for (let i = 0; i < users.length; i++) {
         const user = users[i];
         try {
@@ -507,6 +506,20 @@ async function syncGroupUsersFromMaster(groupInfo, opts = {}) {
             }
             syncedUsers++;
             console.log(`[sync] generate-keys OK for ${user.name} (${i + 1}/${users.length})`);
+
+            // Restore usedGB from backup so Master tracks actual usage (not reset to 0).
+            if (user.usedGB > 0) {
+                await sleep(1000);
+                try {
+                    await fetchWithRetry(groupInfo.masterIp + '/api/internal/edit-user', {
+                        username: user.name,
+                        usedGB: user.usedGB
+                    }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 5000 }, 1, 500);
+                    console.log(`[sync] restored usedGB=${user.usedGB} for ${user.name}`);
+                } catch (e) {
+                    console.log(`[sync] edit-user usedGB failed for ${user.name}: ${getErrMsg(e)}`);
+                }
+            }
         } catch (err) {
             const status = err && err.response && err.response.status;
             if (status === 400) {
