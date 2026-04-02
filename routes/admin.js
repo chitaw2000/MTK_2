@@ -475,151 +475,82 @@ async function syncGroupUsersFromMaster(groupInfo, opts = {}) {
     const apiKeyHeader = groupInfo.masterApiKey || process.env.PANELMASTER_API_KEY;
     const users = await User.find({ groupName: groupInfo.name });
     const safeMode = opts.safeMode !== false;
-
-    // ── Safe mode: local-only backfill (zero Master API calls, zero xray impact) ──
-    if (safeMode) {
-        const allNodeKeys = {};
-        for (const u of users) {
-            if (u.accessKeys && typeof u.accessKeys === 'object') {
-                for (const [nodeKey, cfg] of Object.entries(u.accessKeys)) {
-                    if (!nodeKey || allNodeKeys[nodeKey]) continue;
-                    try { allNodeKeys[nodeKey] = JSON.parse(JSON.stringify(cfg)); } catch (e) { allNodeKeys[nodeKey] = cfg; }
-                }
-            }
-        }
-        let syncedUsers = 0;
-        let failedUsers = 0;
-        for (const user of users) {
-            try {
-                const existing = (user.accessKeys && typeof user.accessKeys === 'object') ? { ...user.accessKeys } : {};
-                let changed = false;
-                for (const [nodeKey, templateCfg] of Object.entries(allNodeKeys)) {
-                    if (existing[nodeKey] !== undefined) continue;
-                    const built = buildNodeConfigForUser(user, templateCfg);
-                    existing[nodeKey] = built;
-                    changed = true;
-                }
-                if (changed) {
-                    await User.updateOne({ _id: user._id }, {
-                        $set: {
-                            accessKeys: existing,
-                            serverLabels: buildServerLabels(existing, user.serverLabels),
-                            ...( (!user.currentServer || !existing[user.currentServer]) ? { currentServer: Object.keys(existing)[0] || 'None' } : {} )
-                        }
-                    });
-                    try { await redisClient.del(user.token); } catch (e) {}
-                }
-                syncedUsers++;
-            } catch (err) {
-                failedUsers++;
-                console.log(`[sync-safe] backfill failed for ${user.name}: ${getErrMsg(err)}`);
-            }
-        }
-        return { groupName: groupInfo.name, totalUsers: users.length, syncedUsers, failedUsers, expectedNodeCount: Object.keys(allNodeKeys).length };
-    }
-
-    // ── Non-safe mode: full Master API sync (generate-keys) ──
-    const allowEditUserFallback = opts.allowEditUserFallback === true;
-    const pushQuotaToMaster = opts.pushQuotaToMaster === true;
-    const batchSize = Number(opts.batchSize) > 0 ? Number(opts.batchSize) : 2;
-    let expectedGroupNodeIds = new Set();
-
-    let targetGroupFound = false;
-    try {
-        let activeGroupsResponse;
-        try {
-            activeGroupsResponse = await fetchWithRetry(groupInfo.masterIp + '/api/active-groups', null, {
-                method: 'get',
-                headers: { 'x-api-key': apiKeyHeader },
-                timeout: 7000
-            }, 1, 300);
-        } catch (e) {
-            activeGroupsResponse = await fetchWithRetry(groupInfo.masterIp + '/api/active-groups', {}, {
-                method: 'post',
-                headers: { 'x-api-key': apiKeyHeader },
-                timeout: 7000
-            }, 1, 300);
-        }
-        const groups = (activeGroupsResponse && activeGroupsResponse.data && Array.isArray(activeGroupsResponse.data.groups))
-            ? activeGroupsResponse.data.groups
-            : [];
-        const targetGroup = groups.find((g) => String(g.id) === String(groupInfo.masterGroupId)) ||
-            groups.find((g) => String(g.name) === String(groupInfo.name));
-        targetGroupFound = !!targetGroup;
-        if (targetGroupFound) {
-            expectedGroupNodeIds = extractNodeIdSetFromMasterGroup(targetGroup);
-        }
-    } catch (e) {}
-
-    if (!targetGroupFound) {
-        throw new Error('Master group mapping check failed. Please verify masterGroupId/master connection before sync.');
-    }
+    const throttleMs = Number(opts.throttleMs) > 0 ? Number(opts.throttleMs) : 2000;
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
     let syncedUsers = 0;
     let failedUsers = 0;
-    for (let i = 0; i < users.length; i += batchSize) {
-        const batch = users.slice(i, i + batchSize);
-        await Promise.all(batch.map(async (user) => {
-            try {
-                const masterResponse = await fetchWithRetry(groupInfo.masterIp + '/api/generate-keys', {
-                    masterGroupId: groupInfo.masterGroupId,
-                    userName: user.name,
-                    totalGB: user.totalGB,
-                    expireDate: user.expireDate,
-                }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 8000 }, 1, 500);
-                let masterKeys = pickKeysFromResponsePayload(masterResponse && masterResponse.data ? masterResponse.data : masterResponse);
+    let skippedExisting = 0;
 
-                const existingCount = (user.accessKeys && typeof user.accessKeys === 'object') ? Object.keys(user.accessKeys).length : 0;
-                const currentCount = (masterKeys && typeof masterKeys === 'object') ? Object.keys(masterKeys).length : 0;
-                const currentKeySet = new Set((masterKeys && typeof masterKeys === 'object') ? Object.keys(masterKeys).map((k) => String(k)) : []);
-                const missingExpectedNodes = expectedGroupNodeIds.size > 0
-                    ? Array.from(expectedGroupNodeIds).some((id) => !currentKeySet.has(String(id)))
-                    : false;
+    // Step 1: Throttled generate-keys — one user at a time, with delay between each.
+    for (let i = 0; i < users.length; i++) {
+        const user = users[i];
+        try {
+            const masterResponse = await fetchWithRetry(groupInfo.masterIp + '/api/generate-keys', {
+                masterGroupId: groupInfo.masterGroupId,
+                userName: user.name,
+                totalGB: user.totalGB,
+                expireDate: user.expireDate,
+            }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 12000 }, 1, 500);
 
-                if (allowEditUserFallback && (!masterKeys || currentCount <= existingCount || missingExpectedNodes)) {
-                    try {
-                        const editResponse = await fetchWithRetry(groupInfo.masterIp + '/api/internal/edit-user', {
-                            username: user.name,
-                            userName: user.name,
-                            name: user.name,
-                            masterGroupId: groupInfo.masterGroupId,
-                            token: user.token,
-                            userToken: user.token
-                        }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 10000 }, 1, 500);
-                        const fallbackKeys = pickKeysFromResponsePayload(editResponse && editResponse.data ? editResponse.data : editResponse);
-                        const fallbackCount = (fallbackKeys && typeof fallbackKeys === 'object') ? Object.keys(fallbackKeys).length : 0;
-                        if (fallbackKeys && fallbackCount >= currentCount) {
-                            masterKeys = fallbackKeys;
-                        }
-                    } catch (e) {}
+            const masterKeys = pickKeysFromResponsePayload(masterResponse && masterResponse.data ? masterResponse.data : masterResponse);
+            if (masterKeys && typeof masterKeys === 'object' && Object.keys(masterKeys).length > 0) {
+                const updateQuery = {
+                    accessKeys: masterKeys,
+                    serverLabels: buildServerLabels(masterKeys, user.serverLabels)
+                };
+                if (!user.currentServer || user.currentServer === 'None' || !masterKeys[user.currentServer]) {
+                    updateQuery.currentServer = Object.keys(masterKeys)[0] || 'None';
                 }
-
-                if (pushQuotaToMaster && masterKeys) try {
-                    await fetchWithRetry(groupInfo.masterIp + '/api/internal/edit-user', {
-                        username: user.name,
-                        totalGB: user.totalGB,
-                        usedGB: user.usedGB,
-                        expireDate: user.expireDate
-                    }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 3000 });
-                } catch (e) {}
-
-                if (masterKeys && typeof masterKeys === 'object' && Object.keys(masterKeys).length > 0) {
-                    const updateQuery = {
-                        accessKeys: masterKeys,
-                        serverLabels: buildServerLabels(masterKeys, user.serverLabels)
-                    };
-                    if (!user.currentServer || user.currentServer === 'None' || !masterKeys[user.currentServer]) {
-                        updateQuery.currentServer = Object.keys(masterKeys)[0] || 'None';
-                    }
-                    await User.updateOne({ _id: user._id }, { $set: updateQuery });
-                    try { await redisClient.del(user.token); } catch (e) {}
-                }
-                syncedUsers += 1;
-            } catch (err) {
-                failedUsers += 1;
-                console.log(`❌ Failed to sync nodes for user: ${user.name} :: ${getErrMsg(err)}`);
+                await User.updateOne({ _id: user._id }, { $set: updateQuery });
+                try { await redisClient.del(user.token); } catch (e) {}
             }
-        }));
+            syncedUsers++;
+            console.log(`[sync] generate-keys OK for ${user.name} (${i + 1}/${users.length})`);
+        } catch (err) {
+            const status = err && err.response && err.response.status;
+            if (status === 400) {
+                skippedExisting++;
+                console.log(`[sync] user already exists on master: ${user.name} (${i + 1}/${users.length})`);
+            } else {
+                failedUsers++;
+                console.log(`[sync] generate-keys failed for ${user.name}: ${getErrMsg(err)}`);
+            }
+        }
+        if (i < users.length - 1) await sleep(throttleMs);
+    }
+
+    // Step 2: Local backfill — fill missing nodes from group peers (no Master call).
+    const allNodeKeys = {};
+    const freshUsers = await User.find({ groupName: groupInfo.name });
+    for (const u of freshUsers) {
+        if (u.accessKeys && typeof u.accessKeys === 'object') {
+            for (const [nodeKey, cfg] of Object.entries(u.accessKeys)) {
+                if (!nodeKey || allNodeKeys[nodeKey]) continue;
+                try { allNodeKeys[nodeKey] = JSON.parse(JSON.stringify(cfg)); } catch (e) { allNodeKeys[nodeKey] = cfg; }
+            }
+        }
+    }
+    for (const user of freshUsers) {
+        try {
+            const existing = (user.accessKeys && typeof user.accessKeys === 'object') ? { ...user.accessKeys } : {};
+            let changed = false;
+            for (const [nodeKey, templateCfg] of Object.entries(allNodeKeys)) {
+                if (existing[nodeKey] !== undefined) continue;
+                existing[nodeKey] = buildNodeConfigForUser(user, templateCfg);
+                changed = true;
+            }
+            if (changed) {
+                await User.updateOne({ _id: user._id }, {
+                    $set: {
+                        accessKeys: existing,
+                        serverLabels: buildServerLabels(existing, user.serverLabels),
+                        ...( (!user.currentServer || !existing[user.currentServer]) ? { currentServer: Object.keys(existing)[0] || 'None' } : {} )
+                    }
+                });
+                try { await redisClient.del(user.token); } catch (e) {}
+            }
+        } catch (e) {}
     }
 
     return {
@@ -627,7 +558,8 @@ async function syncGroupUsersFromMaster(groupInfo, opts = {}) {
         totalUsers: users.length,
         syncedUsers,
         failedUsers,
-        expectedNodeCount: expectedGroupNodeIds.size
+        skippedExisting,
+        expectedNodeCount: Object.keys(allNodeKeys).length
     };
 }
 
@@ -2004,12 +1936,7 @@ adminApp.post('/sync-group-nodes', async (req, res) => {
         const groupName = req.body.groupName;
         const groupInfo = await Group.findOne({ name: groupName });
         if (!groupInfo || !groupInfo.masterIp) return res.redirect('/admin');
-        await syncGroupUsersFromMaster(groupInfo, {
-            safeMode: true,
-            batchSize: 1,
-            allowEditUserFallback: false,
-            pushQuotaToMaster: false
-        });
+        await syncGroupUsersFromMaster(groupInfo, { throttleMs: 2000 });
         res.redirect('/admin/group/' + encodeURIComponent(groupName));
     } catch (error) { 
         res.status(500).send("Error syncing nodes"); 
@@ -2042,12 +1969,7 @@ adminApp.post('/master-node-changed', requireApiKey, async (req, res) => {
         const summary = [];
         for (const groupInfo of groups) {
             try {
-                const result = await syncGroupUsersFromMaster(groupInfo, {
-                    safeMode: true,
-                    batchSize: 1,
-                    allowEditUserFallback: false,
-                    pushQuotaToMaster: false
-                });
+                const result = await syncGroupUsersFromMaster(groupInfo, { throttleMs: 2000 });
                 summary.push({ groupName: groupInfo.name, ...result, success: true });
             } catch (e) {
                 summary.push({ groupName: groupInfo.name, success: false, error: getErrMsg(e) });
