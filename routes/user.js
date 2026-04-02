@@ -950,7 +950,6 @@ userApp.get('/admin/api/internal/sync-user-usage/:identifier', requireApiKey, sy
 
 async function syncNewServerHandler(req, res) {
     try {
-        const apiKey = req.headers['x-api-key'];
         const payload = {
             ...(req.body || {}),
             ...((req.body && typeof req.body.data === 'object') ? req.body.data : {})
@@ -976,6 +975,14 @@ async function syncNewServerHandler(req, res) {
             serverLabel,
             userKeyEntries: approxUserKeyEntries
         });
+        if (!masterGroupId) {
+            console.warn('[sync-new-server] invalid payload', {
+                reason: 'missing-masterGroupId',
+                groupName,
+                serverKey
+            });
+            return res.status(400).json({ error: 'masterGroupId is required' });
+        }
         if (!serverKey || !userKeys || typeof userKeys !== 'object') {
             console.warn('[sync-new-server] invalid payload', {
                 masterGroupId,
@@ -986,28 +993,31 @@ async function syncNewServerHandler(req, res) {
             return res.status(400).json({ error: "Invalid payload data" });
         }
 
-        const groupByMasterId = masterGroupId ? await Group.findOne({ masterGroupId: masterGroupId }) : null;
-        const groupByName = (!groupByMasterId && groupName) ? await findGroupByUserGroupName(groupName) : null;
-        const groupByApiKey = (!groupByMasterId && !groupByName && apiKey)
-            ? await Group.findOne({ masterApiKey: String(apiKey).trim() })
-            : null;
-        const validGroup = groupByMasterId || groupByName || groupByApiKey;
+        const validGroup = await Group.findOne({ masterGroupId: masterGroupId });
         console.log('[sync-new-server] group lookup', {
             masterGroupId,
             groupName,
             groupMatched: !!validGroup,
-            resolvedBy: groupByMasterId ? 'masterGroupId' : (groupByName ? 'groupName' : (groupByApiKey ? 'apiKey' : 'none')),
+            resolvedBy: validGroup ? 'masterGroupId' : 'none',
             resolvedGroupName: validGroup ? validGroup.name : null
         });
-        // 🌟 Ensure it checks process.env if Group key doesn't match
-        if (!validGroup && apiKey !== process.env.PANELMASTER_API_KEY) {
+        // Strict mode: masterGroupId must map to an existing local group.
+        if (!validGroup) {
             console.warn('[sync-new-server] unauthorized request', {
                 masterGroupId,
                 groupName,
-                reason: 'group-not-found-and-api-key-mismatch',
-                tip: 'send valid masterGroupId/groupName or use matching PANELMASTER_API_KEY'
+                reason: 'masterGroupId-not-found',
+                tip: 'ensure masterGroupId matches local Group.masterGroupId'
             });
-            return res.status(401).json({ error: "Unauthorized" });
+            return res.status(404).json({ error: 'Group not found for masterGroupId' });
+        }
+        if (groupName && String(validGroup.name || '').toLowerCase() !== String(groupName).toLowerCase()) {
+            console.warn('[sync-new-server] group identity mismatch', {
+                masterGroupId,
+                payloadGroupName: groupName,
+                localGroupName: validGroup.name
+            });
+            return res.status(400).json({ error: 'groupName does not match masterGroupId mapping' });
         }
 
         const normalizedServerPayload =
@@ -1097,7 +1107,7 @@ async function syncNewServerHandler(req, res) {
     }
 }
 
-userApp.post('/api/internal/sync-new-server', syncNewServerHandler);
+userApp.post('/api/internal/sync-new-server', requireApiKey, syncNewServerHandler);
 userApp.post('/sync-new-server', requireApiKey, syncNewServerHandler);
 userApp.post('/admin/api/internal/sync-new-server', requireApiKey, syncNewServerHandler);
 
