@@ -1768,6 +1768,42 @@ adminApp.post('/sync-group-nodes', async (req, res) => {
         const users = await User.find({ groupName: groupName });
         // Keep fan-out conservative to avoid stressing master/xray on bulk sync.
         const batchSize = 2;
+        const normalizeNodeId = (n, fallbackId = '') => {
+            if (typeof n === 'string') return String(n).trim();
+            if (!n || typeof n !== 'object') return '';
+            const id = n.id || n.serverId || n.nodeId || n.key || fallbackId || n.name || n.serverName || n.nodeName || '';
+            return String(id || '').trim();
+        };
+        const extractNodeIdSetFromGroup = (groupObj) => {
+            if (!groupObj || typeof groupObj !== 'object') return new Set();
+            const rawNodes =
+                groupObj.activeNodes ??
+                groupObj.nodes ??
+                groupObj.servers ??
+                groupObj.serverList ??
+                groupObj.activeNodeList ??
+                groupObj.onlineNodes ??
+                groupObj.nodeList;
+            const ids = new Set();
+            if (Array.isArray(rawNodes)) {
+                for (const n of rawNodes) {
+                    const id = normalizeNodeId(n);
+                    if (id) ids.add(id);
+                }
+            } else if (rawNodes && typeof rawNodes === 'object') {
+                for (const [k, v] of Object.entries(rawNodes)) {
+                    const id = normalizeNodeId(v, k);
+                    if (id) ids.add(id);
+                }
+            } else if (typeof rawNodes === 'string' && rawNodes.trim()) {
+                for (const s of rawNodes.split(',')) {
+                    const id = String(s || '').trim();
+                    if (id) ids.add(id);
+                }
+            }
+            return ids;
+        };
+        let expectedGroupNodeIds = new Set();
 
         // Preflight: ensure the configured group exists on master before syncing users.
         let targetGroupFound = false;
@@ -1789,7 +1825,12 @@ adminApp.post('/sync-group-nodes', async (req, res) => {
             const groups = (activeGroupsResponse && activeGroupsResponse.data && Array.isArray(activeGroupsResponse.data.groups))
                 ? activeGroupsResponse.data.groups
                 : [];
-            targetGroupFound = groups.some((g) => String(g.id) === String(groupInfo.masterGroupId) || String(g.name) === String(groupInfo.name));
+            const targetGroup = groups.find((g) => String(g.id) === String(groupInfo.masterGroupId)) ||
+                groups.find((g) => String(g.name) === String(groupInfo.name));
+            targetGroupFound = !!targetGroup;
+            if (targetGroupFound) {
+                expectedGroupNodeIds = extractNodeIdSetFromGroup(targetGroup);
+            }
         } catch (e) {}
         if (!targetGroupFound) {
             return res.status(400).send("Master group mapping check failed. Please verify masterGroupId/master connection before sync.");
@@ -1810,10 +1851,15 @@ adminApp.post('/sync-group-nodes', async (req, res) => {
                         let masterKeys = pickKeysFromResponsePayload(masterResponse && masterResponse.data ? masterResponse.data : masterResponse);
                         const existingCount = (user.accessKeys && typeof user.accessKeys === 'object') ? Object.keys(user.accessKeys).length : 0;
                         const currentCount = (masterKeys && typeof masterKeys === 'object') ? Object.keys(masterKeys).length : 0;
+                        const currentKeySet = new Set((masterKeys && typeof masterKeys === 'object') ? Object.keys(masterKeys).map((k) => String(k)) : []);
+                        const missingExpectedNodes = expectedGroupNodeIds.size > 0
+                            ? Array.from(expectedGroupNodeIds).some((id) => !currentKeySet.has(String(id)))
+                            : false;
 
                         // Some masters do not return refreshed keys for existing users on generate-keys.
                         // Use edit-user as a lightweight fallback to fetch full current keyset.
-                        if (!masterKeys || currentCount <= existingCount) {
+                        // Also fallback when generate-keys misses expected group nodes.
+                        if (!masterKeys || currentCount <= existingCount || missingExpectedNodes) {
                             try {
                                 const editResponse = await fetchWithRetry(groupInfo.masterIp + '/api/internal/edit-user', {
                                     username: user.name,
