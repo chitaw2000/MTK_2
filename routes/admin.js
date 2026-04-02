@@ -1361,6 +1361,10 @@ adminApp.get('/group/:name', async (req, res) => {
             let nodesFromMasterApiList = false;
             const normalizeNode = (n, fallbackId = '') => {
                 if (typeof n === 'string') return { id: n, label: n };
+                if (n !== null && typeof n !== 'object') {
+                    const fb = String(fallbackId || '').trim();
+                    return fb ? { id: fb, label: fb } : null;
+                }
                 if (!n || typeof n !== 'object') return null;
                 const id = n.id || n.serverId || n.nodeId || n.key || fallbackId || n.name || n.serverName || n.nodeName || '';
                 const label = n.displayName || n.name || n.serverName || n.nodeName || n.title || id || '';
@@ -1770,6 +1774,7 @@ adminApp.post('/sync-group-nodes', async (req, res) => {
         const batchSize = 2;
         const normalizeNodeId = (n, fallbackId = '') => {
             if (typeof n === 'string') return String(n).trim();
+            if (n !== null && typeof n !== 'object') return String(fallbackId || '').trim();
             if (!n || typeof n !== 'object') return '';
             const id = n.id || n.serverId || n.nodeId || n.key || fallbackId || n.name || n.serverName || n.nodeName || '';
             return String(id || '').trim();
