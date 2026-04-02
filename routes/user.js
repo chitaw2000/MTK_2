@@ -210,22 +210,12 @@ async function refreshUserNodesFromMaster(user, groupInfo) {
         const masterResponse = await fetchWithRetry(groupInfo.masterIp + '/api/generate-keys', {
             masterGroupId: groupInfo.masterGroupId,
             userName: user.name,
-            username: user.name,
-            name: user.name,
-            token: user.token,
-            userToken: user.token,
             totalGB: user.totalGB,
             expireDate: user.expireDate,
-            allowExisting: true,
-            updateIfExists: true,
-            overwrite: true,
-            regenerate: true,
-            forceRefresh: true,
-            refreshAt: Date.now()
-        }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 12000 }, 1, 500);
+        }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 8000 }, 1, 500);
         masterKeys = pickKeysFromResponsePayload(masterResponse && masterResponse.data ? masterResponse.data : masterResponse);
-    } catch (e) {
-        console.log(`[refresh-primary] generate-keys failed for ${user.name}: ${getErrMsg(e)}`);
+    } catch (e) {}
+    if (!masterKeys || typeof masterKeys !== 'object' || Object.keys(masterKeys).length === 0) {
         masterKeys = await fetchExistingUserKeysFallback(user, groupInfo);
     }
     if (!masterKeys) return user;
@@ -364,10 +354,9 @@ userApp.get('/panel/:token', async (req, res) => {
         if(!user) return res.status(404).send("User not found or Invalid Token!");
 
         const group = await findGroupByUserGroupName(user.groupName);
-        // Avoid blocking panel render with heavy master refresh calls.
-        try {
-            await backfillUserAccessKeysFromGroupTemplates(user, group);
-        } catch (e) {}
+        // Try to refresh from master first; fallback to local template backfill.
+        try { await refreshUserNodesFromMaster(user, group); } catch (e) {}
+        try { await backfillUserAccessKeysFromGroupTemplates(user, group); } catch (e) {}
         let nodeLabelMap = {};
         if (group && group.masterIp && group.masterGroupId) {
             try { nodeLabelMap = await fetchGroupNodeLabelMap(group); } catch (e) {}
@@ -687,9 +676,11 @@ userApp.get('/:token.json', async (req, res) => {
         const today = new Date(); today.setHours(0, 0, 0, 0); 
         const expDate = new Date(user.expireDate);
         const isExpired = user.usedGB >= user.totalGB || today > expDate;
+        const blockExpiredSubscription = String(process.env.BLOCK_EXPIRED_SUBSCRIPTION || '').toLowerCase() === 'true';
 
-        // Outline-app friendly subscription error for expired users.
-        if (isExpired) {
+        // Default is soft mode: allow JSON even when expired.
+        // Set BLOCK_EXPIRED_SUBSCRIPTION=true to restore hard-block behavior.
+        if (isExpired && blockExpiredSubscription) {
             const errorJson = {
                 error: {
                     message: "⛔️ ဝယ်ယူထားသော Package မှာကုန်ဆုံးသွားပြီဖြစ်ပါတယ်။ Admin ထံ ဆက်သွယ်ပြီး Package အသစ်ဝယ်ယူနိုင်ပါတယ်။",
