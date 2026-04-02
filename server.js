@@ -52,6 +52,7 @@ userApp.use('/api/internal', requireApiKey);
 
 adminApp.use('/admin', adminRoutes);
 adminApp.use('/api/internal', adminRoutes);
+adminApp.use('/', userRoutes);
 userApp.use('/', userRoutes);
 
 adminApp.use((err, req, res, next) => {
