@@ -474,7 +474,10 @@ async function syncGroupUsersFromMaster(groupInfo, opts = {}) {
 
     const apiKeyHeader = groupInfo.masterApiKey || process.env.PANELMASTER_API_KEY;
     const users = await User.find({ groupName: groupInfo.name });
-    const batchSize = Number(opts.batchSize) > 0 ? Number(opts.batchSize) : 2;
+    const safeMode = opts.safeMode !== false;
+    const allowEditUserFallback = opts.allowEditUserFallback === true && !safeMode;
+    const pushQuotaToMaster = opts.pushQuotaToMaster === true && !safeMode;
+    const batchSize = Number(opts.batchSize) > 0 ? Number(opts.batchSize) : (safeMode ? 1 : 2);
     let expectedGroupNodeIds = new Set();
 
     let targetGroupFound = false;
@@ -529,7 +532,7 @@ async function syncGroupUsersFromMaster(groupInfo, opts = {}) {
                     ? Array.from(expectedGroupNodeIds).some((id) => !currentKeySet.has(String(id)))
                     : false;
 
-                if (!masterKeys || currentCount <= existingCount || missingExpectedNodes) {
+                if (allowEditUserFallback && (!masterKeys || currentCount <= existingCount || missingExpectedNodes)) {
                     try {
                         const editResponse = await fetchWithRetry(groupInfo.masterIp + '/api/internal/edit-user', {
                             username: user.name,
@@ -558,7 +561,7 @@ async function syncGroupUsersFromMaster(groupInfo, opts = {}) {
                     await User.updateOne({ _id: user._id }, { $set: updateQuery });
                     try { await redisClient.del(user.token); } catch (e) {}
 
-                    try {
+                    if (pushQuotaToMaster) try {
                         await fetchWithRetry(groupInfo.masterIp + '/api/internal/edit-user', {
                             username: user.name,
                             totalGB: user.totalGB,
@@ -1927,7 +1930,12 @@ adminApp.post('/sync-group-nodes', async (req, res) => {
         const groupName = req.body.groupName;
         const groupInfo = await Group.findOne({ name: groupName });
         if (!groupInfo || !groupInfo.masterIp) return res.redirect('/admin');
-        await syncGroupUsersFromMaster(groupInfo, { batchSize: 2 });
+        await syncGroupUsersFromMaster(groupInfo, {
+            safeMode: true,
+            batchSize: 1,
+            allowEditUserFallback: false,
+            pushQuotaToMaster: false
+        });
         res.redirect('/admin/group/' + encodeURIComponent(groupName));
     } catch (error) { 
         res.status(500).send("Error syncing nodes"); 
@@ -1960,7 +1968,12 @@ adminApp.post('/master-node-changed', requireApiKey, async (req, res) => {
         const summary = [];
         for (const groupInfo of groups) {
             try {
-                const result = await syncGroupUsersFromMaster(groupInfo, { batchSize: 2 });
+                const result = await syncGroupUsersFromMaster(groupInfo, {
+                    safeMode: true,
+                    batchSize: 1,
+                    allowEditUserFallback: false,
+                    pushQuotaToMaster: false
+                });
                 summary.push({ groupName: groupInfo.name, ...result, success: true });
             } catch (e) {
                 summary.push({ groupName: groupInfo.name, success: false, error: getErrMsg(e) });
