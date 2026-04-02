@@ -963,13 +963,38 @@ async function syncNewServerHandler(req, res) {
         const userKeys = payload.userKeys && typeof payload.userKeys === 'object' ? payload.userKeys : payload.userkeys;
         const serverKey = newServerId || newServerName;
         const serverLabel = newServerDisplayName || serverKey;
+        const approxUserKeyEntries = (userKeys && typeof userKeys === 'object' && !Array.isArray(userKeys))
+            ? Object.keys(userKeys).length
+            : 0;
+        console.log('[sync-new-server] webhook received', {
+            path: req.originalUrl || req.path,
+            method: req.method,
+            masterGroupId,
+            serverKey,
+            serverLabel,
+            userKeyEntries: approxUserKeyEntries
+        });
         if (!serverKey || !userKeys || typeof userKeys !== 'object') {
+            console.warn('[sync-new-server] invalid payload', {
+                masterGroupId,
+                serverKey,
+                hasUserKeysObject: !!(userKeys && typeof userKeys === 'object')
+            });
             return res.status(400).json({ error: "Invalid payload data" });
         }
 
         const validGroup = await Group.findOne({ masterGroupId: masterGroupId });
+        console.log('[sync-new-server] group lookup', {
+            masterGroupId,
+            groupMatched: !!validGroup,
+            groupName: validGroup ? validGroup.name : null
+        });
         // 🌟 Ensure it checks process.env if Group key doesn't match
         if (!validGroup && apiKey !== process.env.PANELMASTER_API_KEY) {
+            console.warn('[sync-new-server] unauthorized request', {
+                masterGroupId,
+                reason: 'group-not-found-and-api-key-mismatch'
+            });
             return res.status(401).json({ error: "Unauthorized" });
         }
 
@@ -985,6 +1010,10 @@ async function syncNewServerHandler(req, res) {
                 userConfigMap = nestedCandidate;
             }
         }
+        console.log('[sync-new-server] payload normalized', {
+            serverKey,
+            configEntries: Object.keys(userConfigMap || {}).length
+        });
 
         const groupUsers = validGroup ? await User.find({ groupName: validGroup.name }, { _id: 1, token: 1, name: 1 }) : [];
         const byToken = new Map();
@@ -1034,6 +1063,15 @@ async function syncNewServerHandler(req, res) {
                 refreshedSummary = await refreshGroupUsersFromMaster(validGroup, 5);
             } catch (e) {}
         }
+        console.log('[sync-new-server] completed', {
+            masterGroupId,
+            groupName: validGroup ? validGroup.name : null,
+            serverKey,
+            successCount,
+            unmatchedCount,
+            refreshedUsers: refreshedSummary.refreshed,
+            refreshFailed: refreshedSummary.failed
+        });
         return res.json({
             success: true,
             message: `Server synced successfully for ${successCount} users`,
@@ -1041,7 +1079,10 @@ async function syncNewServerHandler(req, res) {
             refreshFailed: refreshedSummary.failed,
             unmatchedIdentifiers: unmatchedCount
         });
-    } catch (error) { res.status(500).json({ error: "Server Error" }); }
+    } catch (error) {
+        console.error('[sync-new-server] handler failed', error && error.message ? error.message : error);
+        res.status(500).json({ error: "Server Error" });
+    }
 }
 
 userApp.post('/api/internal/sync-new-server', syncNewServerHandler);
