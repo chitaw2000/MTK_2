@@ -110,6 +110,8 @@ if ! command -v mongod &>/dev/null; then
             ;;
     esac
     log "Installing MongoDB ${MONGO_VER} (${MONGO_CODENAME})..."
+    rm -f /etc/apt/sources.list.d/mongodb-org-*.list
+    rm -f /usr/share/keyrings/mongodb-server-*.gpg
     curl -fsSL "https://www.mongodb.org/static/pgp/server-${MONGO_VER}.asc" | gpg --dearmor -o "/usr/share/keyrings/mongodb-server-${MONGO_VER}.gpg"
     echo "deb [ signed-by=/usr/share/keyrings/mongodb-server-${MONGO_VER}.gpg ] https://repo.mongodb.org/apt/ubuntu ${MONGO_CODENAME}/mongodb-org/${MONGO_VER} multiverse" > "/etc/apt/sources.list.d/mongodb-org-${MONGO_VER}.list"
     apt update -y
