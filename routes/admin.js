@@ -1656,7 +1656,7 @@ adminApp.get('/group/:name', async (req, res) => {
         <tr id="user-${u.token}" class="border-b border-slate-100 ${isHighlighted} transition duration-500">
             <td class="p-4 text-slate-800 font-black">#${u.userNo || '-'}</td>
             <td class="p-4">
-                <div class="font-bold text-slate-800">${u.name}</div>
+                <div class="font-bold ${u.isBlocked ? 'text-red-500 line-through' : 'text-slate-800'}">${u.name}${u.isBlocked ? ' <span class="text-[10px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-black uppercase no-underline inline-block ml-1">Blocked</span>' : ''}</div>
                 <div class="text-xs text-indigo-500 font-mono bg-indigo-50 px-2 py-0.5 rounded inline-block mt-1 border border-indigo-100 shadow-sm">${u.token}</div>
             </td>
             <td class="p-4">
@@ -1686,6 +1686,13 @@ adminApp.get('/group/:name', async (req, res) => {
                 <button onclick="openEditModal('${u.token}', '${u.totalGB}', '${u.expireDate}')" class="bg-yellow-50 text-yellow-600 hover:bg-yellow-500 hover:text-white px-3 py-2 rounded-lg text-sm font-bold transition shadow-sm" title="Edit User">
                     <i class="fas fa-edit"></i>
                 </button>
+                <form action="/admin/toggle-block-user" method="POST" class="m-0" onsubmit="return confirm('${u.isBlocked ? 'ပြန်ဖွင့်မှာ သေချာပြီလား?' : 'ပိတ်မှာ သေချာပြီလား?'}');">
+                    <input type="hidden" name="token" value="${u.token}">
+                    <input type="hidden" name="groupName" value="${u.groupName}">
+                    <button type="submit" class="${u.isBlocked ? 'bg-green-50 text-green-600 hover:bg-green-500' : 'bg-orange-50 text-orange-500 hover:bg-orange-500'} hover:text-white px-3 py-2 rounded-lg text-sm font-bold transition shadow-sm" title="${u.isBlocked ? 'Unblock User' : 'Block User'}">
+                        <i class="fas ${u.isBlocked ? 'fa-unlock' : 'fa-lock'}"></i>
+                    </button>
+                </form>
                 <form action="/admin/delete-user" method="POST" onsubmit="return confirm('ဖျက်မှာ သေချာပြီလား?');" class="m-0">
                     <input type="hidden" name="token" value="${u.token}">
                     <input type="hidden" name="groupName" value="${u.groupName}">
@@ -2053,6 +2060,36 @@ adminApp.post('/delete-user', async (req, res) => {
         res.redirect('/admin/group/' + encodeURIComponent(req.body.groupName));
     } catch (error) { 
         res.status(500).send("Error deleting user"); 
+    }
+});
+
+adminApp.post('/toggle-block-user', async (req, res) => {
+    try {
+        const { token, groupName } = req.body;
+        const user = await User.findOne({ token });
+        if (!user) return res.status(404).send('User not found');
+
+        const newBlocked = !user.isBlocked;
+        await User.updateOne({ _id: user._id }, { $set: { isBlocked: newBlocked } });
+        try { await redisClient.del(token); } catch (e) {}
+
+        const groupInfo = await Group.findOne({ name: groupName });
+        if (groupInfo && groupInfo.masterIp) {
+            const apiKeyHeader = groupInfo.masterApiKey || process.env.PANELMASTER_API_KEY;
+            const action = newBlocked ? 'suspend' : 'resume';
+            try {
+                await fetchWithRetry(groupInfo.masterIp + '/api/user-action', {
+                    token: token,
+                    action: action
+                }, { headers: { 'x-api-key': apiKeyHeader }, timeout: 10000 });
+            } catch (e) {
+                console.log(`[toggle-block] master user-action ${action} failed for ${user.name}: ${getErrMsg(e)}`);
+            }
+        }
+
+        res.redirect('/admin/group/' + encodeURIComponent(groupName));
+    } catch (error) {
+        res.status(500).send('Error toggling user block status');
     }
 });
 
