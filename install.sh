@@ -86,13 +86,32 @@ else
 fi
 
 # ══════════════════════════════════════════
-# 3. MongoDB 7
+# 3. MongoDB (8.0 for Noble+, 7.0 for Jammy)
 # ══════════════════════════════════════════
 if ! command -v mongod &>/dev/null; then
-    log "Installing MongoDB 7..."
-    curl -fsSL https://www.mongodb.org/static/pgp/server-7.0.asc | gpg --dearmor -o /usr/share/keyrings/mongodb-server-7.0.gpg
     CODENAME=$(lsb_release -cs)
-    echo "deb [ signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg ] https://repo.mongodb.org/apt/ubuntu ${CODENAME}/mongodb-org/7.0 multiverse" > /etc/apt/sources.list.d/mongodb-org-7.0.list
+    case "$CODENAME" in
+        noble|oracular|plucky)
+            MONGO_VER="8.0"
+            MONGO_CODENAME="noble"
+            ;;
+        jammy)
+            MONGO_VER="7.0"
+            MONGO_CODENAME="jammy"
+            ;;
+        focal)
+            MONGO_VER="7.0"
+            MONGO_CODENAME="focal"
+            ;;
+        *)
+            MONGO_VER="8.0"
+            MONGO_CODENAME="noble"
+            warn "Unknown Ubuntu codename '$CODENAME', trying MongoDB ${MONGO_VER} with noble."
+            ;;
+    esac
+    log "Installing MongoDB ${MONGO_VER} (${MONGO_CODENAME})..."
+    curl -fsSL "https://www.mongodb.org/static/pgp/server-${MONGO_VER}.asc" | gpg --dearmor -o "/usr/share/keyrings/mongodb-server-${MONGO_VER}.gpg"
+    echo "deb [ signed-by=/usr/share/keyrings/mongodb-server-${MONGO_VER}.gpg ] https://repo.mongodb.org/apt/ubuntu ${MONGO_CODENAME}/mongodb-org/${MONGO_VER} multiverse" > "/etc/apt/sources.list.d/mongodb-org-${MONGO_VER}.list"
     apt update -y
     apt install -y mongodb-org
     systemctl enable mongod
