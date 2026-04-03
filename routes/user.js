@@ -53,10 +53,31 @@ async function fetchWithRetry(url, data, config, retries = 3, delay = 1000) {
     }
 }
 
+const Setting = require('../models/Setting');
+let _cachedGlobalApiKey = null;
+let _cachedGlobalApiKeyAt = 0;
+async function resolveApiKeyAsync(groupInfo) {
+    if (groupInfo && groupInfo.masterApiKey) return groupInfo.masterApiKey;
+    if (_cachedGlobalApiKey && Date.now() - _cachedGlobalApiKeyAt < 60000) return _cachedGlobalApiKey;
+    try {
+        const s = await Setting.findOne({}, { globalMasterApiKey: 1 });
+        const key = (s && s.globalMasterApiKey) ? s.globalMasterApiKey : (process.env.PANELMASTER_API_KEY || '');
+        _cachedGlobalApiKey = key;
+        _cachedGlobalApiKeyAt = Date.now();
+        return key;
+    } catch (e) {
+        return process.env.PANELMASTER_API_KEY || '';
+    }
+}
+function resolveApiKey(groupInfo) {
+    if (groupInfo && groupInfo.masterApiKey) return groupInfo.masterApiKey;
+    return _cachedGlobalApiKey || process.env.PANELMASTER_API_KEY || '';
+}
+
 async function getActiveNodeProbe(groupInfo, nodeKeys = []) {
     const result = { activeKeys: new Set(), checkedKeys: new Set(), checkedCount: 0 };
     if (!groupInfo || !groupInfo.masterIp || !Array.isArray(nodeKeys) || nodeKeys.length === 0) return result;
-    const apiKeyHeader = groupInfo.masterApiKey || process.env.PANELMASTER_API_KEY;
+    const apiKeyHeader = resolveApiKey(groupInfo);
     const candidates = nodeKeys.slice(0, 20); // keep panel render snappy on huge groups
 
     await Promise.all(candidates.map(async (nodeKey) => {
@@ -96,7 +117,7 @@ function pickKeysFromResponsePayload(payload) {
 }
 
 async function fetchExistingUserKeysFallback(user, groupInfo) {
-    const apiKeyHeader = groupInfo.masterApiKey || process.env.PANELMASTER_API_KEY;
+    const apiKeyHeader = resolveApiKey(groupInfo);
     try {
         const basePayload = {
             username: user.name,
@@ -205,7 +226,7 @@ async function backfillUserAccessKeysFromGroupTemplates(user, groupInfo) {
 
 async function refreshUserNodesFromMaster(user, groupInfo) {
     if (!user || !groupInfo || !groupInfo.masterIp || !groupInfo.masterGroupId) return user;
-    const apiKeyHeader = groupInfo.masterApiKey || process.env.PANELMASTER_API_KEY;
+    const apiKeyHeader = resolveApiKey(groupInfo);
     let masterKeys = null;
     try {
         const masterResponse = await fetchWithRetry(groupInfo.masterIp + '/api/generate-keys', {
@@ -253,7 +274,7 @@ async function refreshGroupUsersFromMaster(groupInfo, batchSize = 5) {
 async function fetchGroupNodeLabelMap(groupInfo) {
     const labelMap = {};
     if (!groupInfo || !groupInfo.masterIp || !groupInfo.masterGroupId) return labelMap;
-    const apiKeyHeader = groupInfo.masterApiKey || process.env.PANELMASTER_API_KEY;
+    const apiKeyHeader = resolveApiKey(groupInfo);
     let response;
     try {
         response = await fetchWithRetry(groupInfo.masterIp + '/api/active-groups', null, {
@@ -314,7 +335,7 @@ userApp.get('/panel/api/ping/:token/:nodeName', async (req, res) => {
         const group = await findGroupByUserGroupName(user.groupName);
         if (!group || !group.masterIp) return res.json({ status: 'offline' });
 
-        const apiKeyHeader = group.masterApiKey || process.env.PANELMASTER_API_KEY;
+        const apiKeyHeader = resolveApiKey(group);
         const url = `${group.masterIp}/api/ping/${encodeURIComponent(nodeName)}`;
         const response = await axios.get(url, { headers: { 'x-api-key': apiKeyHeader }, timeout: 900 });
         res.json(response.data);
@@ -653,7 +674,7 @@ userApp.post('/panel/change-server', async (req, res) => {
         const groupInfo = await findGroupByUserGroupName(user.groupName);
         if (!groupInfo) return res.status(404).send("Group Error");
 
-        const apiKeyHeader = groupInfo.masterApiKey || process.env.PANELMASTER_API_KEY;
+        const apiKeyHeader = resolveApiKey(groupInfo);
 
         if (!user.accessKeys || !user.accessKeys[newServer]) {
             try {

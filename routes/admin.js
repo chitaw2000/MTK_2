@@ -54,6 +54,30 @@ const redisClient = require('../config/redis');
 const { requireApiKey } = require('../security/apiKey');
 
 // ==========================================
+// Global Master API Key resolver (DB setting > .env fallback)
+// ==========================================
+let _cachedGlobalApiKey = null;
+let _cachedGlobalApiKeyAt = 0;
+async function getGlobalMasterApiKey() {
+    if (_cachedGlobalApiKey && Date.now() - _cachedGlobalApiKeyAt < 60000) return _cachedGlobalApiKey;
+    try {
+        const s = await Setting.findOne({}, { globalMasterApiKey: 1 });
+        const key = (s && s.globalMasterApiKey) ? s.globalMasterApiKey : (process.env.PANELMASTER_API_KEY || '');
+        _cachedGlobalApiKey = key;
+        _cachedGlobalApiKeyAt = Date.now();
+        return key;
+    } catch (e) {
+        return process.env.PANELMASTER_API_KEY || '';
+    }
+}
+
+function resolveApiKey(groupInfo) {
+    if (groupInfo && groupInfo.masterApiKey) return groupInfo.masterApiKey;
+    if (_cachedGlobalApiKey) return _cachedGlobalApiKey;
+    return process.env.PANELMASTER_API_KEY || '';
+}
+
+// ==========================================
 // 🌟 0. NATIVE PASSWORD HASHING
 // ==========================================
 function hashPassword(password) {
@@ -93,6 +117,7 @@ async function initDefaultAdmin() {
     }
 }
 setTimeout(initDefaultAdmin, 2000);
+setTimeout(() => getGlobalMasterApiKey().catch(() => {}), 3000);
 
 
 // ==========================================
@@ -164,8 +189,7 @@ adminApp.post('/login', async (req, res) => {
         }
 
         if (isValid) {
-            // 🌟 Check if Telegram Bot is Setup
-            if (setting.botToken && setting.adminId) {
+            if (setting.otpEnabled && setting.botToken && setting.adminId) {
                 try {
                     const otp = Math.floor(100000 + Math.random() * 900000).toString(); 
                     const challengeId = crypto.randomBytes(16).toString('hex');
@@ -182,7 +206,6 @@ adminApp.post('/login', async (req, res) => {
                     return res.redirect('/admin/verify-otp');
                     
                 } catch(e) {
-                    // Strict mode: do not bypass login when OTP sending fails.
                     return res.send(`
                         <script>
                             alert('❌ Telegram OTP ပို့ရန် အခက်အခဲရှိနေပါသည်။\\nBot Token / Chat ID ကို ပြန်စစ်ပြီး ထပ်မံကြိုးစားပါ။');
@@ -191,7 +214,6 @@ adminApp.post('/login', async (req, res) => {
                     `);
                 }
             } else {
-                // No Bot setup, login directly
                 req.session.isAdmin = true;
                 return res.redirect('/admin');
             }
@@ -472,7 +494,7 @@ async function syncGroupUsersFromMaster(groupInfo, opts = {}) {
     if (!groupInfo || !groupInfo.masterIp) throw new Error('Invalid group master setup.');
     if (!groupInfo.masterGroupId) throw new Error('Missing masterGroupId for this group.');
 
-    const apiKeyHeader = groupInfo.masterApiKey || process.env.PANELMASTER_API_KEY;
+    const apiKeyHeader = resolveApiKey(groupInfo);
     const users = await User.find({ groupName: groupInfo.name });
     const throttleMs = Number(opts.throttleMs) > 0 ? Number(opts.throttleMs) : 5000;
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -1070,7 +1092,7 @@ adminApp.get('/settings', async (req, res) => {
                         </div>
                         <form action="/admin/save-telegram-settings" method="POST" class="grid grid-cols-1 gap-5 mb-6">
                             <div>
-                                <label class="block text-[11px] font-black text-slate-400 mb-2 uppercase tracking-widest">Bot Token (Enables 2FA & Backups)</label>
+                                <label class="block text-[11px] font-black text-slate-400 mb-2 uppercase tracking-widest">Bot Token (Enables Backups)</label>
                                 <input type="text" name="botToken" value="${setting.botToken}" placeholder="123456:ABC-DEF1234gh..." class="w-full border-2 border-slate-200 p-3.5 rounded-2xl outline-none focus:border-blue-500 font-mono text-sm text-slate-700 transition">
                             </div>
                             <div class="flex gap-4">
@@ -1083,11 +1105,37 @@ adminApp.get('/settings', async (req, res) => {
                                     <input type="number" name="backupIntervalMinutes" value="${setting.backupIntervalMinutes}" min="1" class="w-full border-2 border-slate-200 p-3.5 rounded-2xl outline-none focus:border-blue-500 font-bold text-sm text-slate-700 transition">
                                 </div>
                             </div>
+                            <div class="flex items-center justify-between bg-slate-50 p-4 rounded-2xl border border-slate-200">
+                                <div>
+                                    <span class="font-black text-sm text-slate-700">Login OTP (2FA)</span>
+                                    <p class="text-[11px] text-slate-400 font-semibold mt-0.5">Login ဝင်ရင် Telegram OTP စစ်မယ်</p>
+                                </div>
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" name="otpEnabled" value="true" ${setting.otpEnabled ? 'checked' : ''} class="sr-only peer">
+                                    <div class="w-11 h-6 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-500"></div>
+                                </label>
+                            </div>
                             <div class="flex gap-3">
                                 <button type="submit" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-2xl transition shadow-[0_4px_15px_rgba(37,99,235,0.3)] active:scale-[0.98]">
                                     <i class="fas fa-save mr-2"></i> Save Telegram Config
                                 </button>
                             </div>
+                        </form>
+                    </div>
+
+                    <div class="bg-white p-6 md:p-8 rounded-[2rem] shadow-sm border border-slate-200">
+                        <div class="flex justify-between items-center mb-6 border-b border-slate-100 pb-4">
+                            <h3 class="text-xl font-black text-slate-800"><i class="fas fa-server text-emerald-500 mr-2"></i> Master Panel API</h3>
+                        </div>
+                        <form action="/admin/save-master-api-key" method="POST" class="grid grid-cols-1 gap-5">
+                            <div>
+                                <label class="block text-[11px] font-black text-slate-400 mb-2 uppercase tracking-widest">Global API Key</label>
+                                <input type="text" name="globalMasterApiKey" value="${setting.globalMasterApiKey || ''}" placeholder="pmk_XXXXXXXX..." class="w-full border-2 border-slate-200 p-3.5 rounded-2xl outline-none focus:border-emerald-500 font-mono text-sm text-slate-700 transition">
+                                <p class="text-[11px] text-slate-400 mt-2 font-semibold">Group ချင်းမှာ API key မထည့်ထားရင် ဒီ key ကို fallback သုံးမယ်။ .env ထဲ PANELMASTER_API_KEY ထည့်ထားရင်လဲ ဒီမှာ override လုပ်လို့ရတယ်။</p>
+                            </div>
+                            <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3.5 rounded-2xl transition shadow-[0_4px_15px_rgba(16,185,129,0.3)] active:scale-[0.98]">
+                                <i class="fas fa-save mr-2"></i> Save API Key
+                            </button>
                         </form>
                     </div>
 
@@ -1164,17 +1212,31 @@ adminApp.post('/change-credentials', async (req, res) => {
 
 adminApp.post('/save-telegram-settings', async (req, res) => {
     try {
-        const { botToken, adminId, backupIntervalMinutes } = req.body;
+        const { botToken, adminId, backupIntervalMinutes, otpEnabled } = req.body;
         await Setting.findOneAndUpdate({}, { 
             botToken, 
             adminId, 
-            backupIntervalMinutes: Number(backupIntervalMinutes) 
+            backupIntervalMinutes: Number(backupIntervalMinutes),
+            otpEnabled: otpEnabled === 'true'
         }, { upsert: true });
         
         startTelegramAutoBackup(); 
-        res.send(`<script>alert('✅ Telegram Settings Saved! 2FA OTP is now active.'); window.location.href='/admin/settings';</script>`);
+        const otpState = otpEnabled === 'true' ? 'ON' : 'OFF';
+        res.send(`<script>alert('✅ Telegram Settings Saved! Login OTP: ${otpState}'); window.location.href='/admin/settings';</script>`);
     } catch(e) { 
         res.status(500).send("Error saving settings"); 
+    }
+});
+
+adminApp.post('/save-master-api-key', async (req, res) => {
+    try {
+        const { globalMasterApiKey } = req.body;
+        await Setting.findOneAndUpdate({}, {
+            globalMasterApiKey: (globalMasterApiKey || '').trim()
+        }, { upsert: true });
+        res.send(`<script>alert('✅ Master API Key Saved!'); window.location.href='/admin/settings';</script>`);
+    } catch (e) {
+        res.status(500).send('Error saving API key');
     }
 });
 
@@ -1325,7 +1387,7 @@ adminApp.post('/api/fetch-master-groups', async (req, res) => {
     try { 
         let { masterIp, masterApiKey } = req.body; 
         masterIp = normalizeMasterBaseUrl(masterIp);
-        const apiKeyHeader = masterApiKey || process.env.PANELMASTER_API_KEY;
+        const apiKeyHeader = masterApiKey || _cachedGlobalApiKey || process.env.PANELMASTER_API_KEY;
         
         try {
             const response = await fetchWithRetry(masterIp + '/api/active-groups', null, { 
@@ -1431,7 +1493,7 @@ adminApp.post('/delete-group', async (req, res) => {
         const users = await User.find({ groupName: req.body.groupName });
         
         if (groupInfo) { 
-            const apiKeyHeader = groupInfo.masterApiKey || process.env.PANELMASTER_API_KEY;
+            const apiKeyHeader = resolveApiKey(groupInfo);
             for (const u of users) { 
                 try { 
                     await fetchWithRetry(groupInfo.masterIp + '/api/internal/delete-user', { username: u.name, token: u.token }, { headers: { 'x-api-key': apiKeyHeader } }); 
@@ -1507,7 +1569,7 @@ adminApp.get('/group/:name', async (req, res) => {
 
     if (groupInfo && groupInfo.masterIp) {
         try {
-            const apiKeyHeader = groupInfo.masterApiKey || process.env.PANELMASTER_API_KEY;
+            const apiKeyHeader = resolveApiKey(groupInfo);
             let response;
             try {
                 response = await fetchWithRetry(groupInfo.masterIp + '/api/active-groups', null, {
@@ -1935,7 +1997,7 @@ adminApp.post('/edit-user', async (req, res) => {
             try {
                 const groupInfo = await Group.findOne({ name: groupName });
                 if (groupInfo && groupInfo.masterIp) {
-                    const apiKeyHeader = groupInfo.masterApiKey || process.env.PANELMASTER_API_KEY;
+                    const apiKeyHeader = resolveApiKey(groupInfo);
                     await fetchWithRetry(groupInfo.masterIp + '/api/internal/edit-user', {
                         username: user.name, 
                         totalGB: user.totalGB, 
@@ -2013,7 +2075,7 @@ adminApp.post('/add-user', async (req, res) => {
         const groupInfo = await Group.findOne({ name: groupName });
         if(!groupInfo || !groupInfo.masterIp) return res.status(400).send("Invalid Group Setup");
 
-        const apiKeyHeader = groupInfo.masterApiKey || process.env.PANELMASTER_API_KEY; 
+        const apiKeyHeader = resolveApiKey(groupInfo); 
         const lastUser = await User.findOne({ groupName: groupName }).sort({ userNo: -1 });
         const nextNo = (lastUser && lastUser.userNo) ? lastUser.userNo + 1 : 1;
 
@@ -2051,7 +2113,7 @@ adminApp.post('/delete-user', async (req, res) => {
         const groupInfo = await Group.findOne({ name: req.body.groupName });
         const user = await User.findOne({ token: token });
         if (groupInfo && user) {
-            const apiKeyHeader = groupInfo.masterApiKey || process.env.PANELMASTER_API_KEY; 
+            const apiKeyHeader = resolveApiKey(groupInfo); 
             try { 
                 await fetchWithRetry(groupInfo.masterIp + '/api/internal/delete-user', { username: user.name, token: token }, { headers: { 'x-api-key': apiKeyHeader } }); 
             } catch(e) {}
@@ -2075,7 +2137,7 @@ adminApp.post('/toggle-block-user', async (req, res) => {
 
         const groupInfo = await Group.findOne({ name: groupName });
         if (groupInfo && groupInfo.masterIp) {
-            const apiKeyHeader = groupInfo.masterApiKey || process.env.PANELMASTER_API_KEY;
+            const apiKeyHeader = resolveApiKey(groupInfo);
             const action = newBlocked ? 'suspend' : 'resume';
             try {
                 await fetchWithRetry(groupInfo.masterIp + '/api/user-action', {
