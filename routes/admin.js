@@ -995,7 +995,7 @@ adminApp.get('/settings', async (req, res) => {
 
     let setting = await Setting.findOne({});
     if (!setting) {
-        setting = { botToken: '', adminId: '', backupIntervalMinutes: 60, adminUsername: 'admin' };
+        setting = { botToken: '', adminId: '', backupIntervalMinutes: 60, adminUsername: 'admin', otpEnabled: false, globalMasterApiKey: '' };
     }
 
     const renderBackupItem = (b, type) => {
@@ -1213,12 +1213,12 @@ adminApp.post('/change-credentials', async (req, res) => {
 adminApp.post('/save-telegram-settings', async (req, res) => {
     try {
         const { botToken, adminId, backupIntervalMinutes, otpEnabled } = req.body;
-        await Setting.findOneAndUpdate({}, { 
+        await Setting.findOneAndUpdate({}, { $set: { 
             botToken, 
             adminId, 
             backupIntervalMinutes: Number(backupIntervalMinutes),
             otpEnabled: otpEnabled === 'true'
-        }, { upsert: true });
+        }}, { upsert: true, new: true });
         
         startTelegramAutoBackup(); 
         const otpState = otpEnabled === 'true' ? 'ON' : 'OFF';
@@ -1231,9 +1231,9 @@ adminApp.post('/save-telegram-settings', async (req, res) => {
 adminApp.post('/save-master-api-key', async (req, res) => {
     try {
         const { globalMasterApiKey } = req.body;
-        await Setting.findOneAndUpdate({}, {
+        await Setting.findOneAndUpdate({}, { $set: {
             globalMasterApiKey: (globalMasterApiKey || '').trim()
-        }, { upsert: true });
+        }}, { upsert: true, new: true });
         res.send(`<script>alert('✅ Master API Key Saved!'); window.location.href='/admin/settings';</script>`);
     } catch (e) {
         res.status(500).send('Error saving API key');
