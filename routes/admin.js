@@ -848,6 +848,14 @@ adminApp.get('/', async (req, res) => {
                             <label class="block text-[11px] font-black text-slate-400 mb-2 uppercase tracking-widest">4. Panel Badge</label>
                             <input type="text" name="panelLabel" placeholder="e.g. Premium, VIP, Gold" class="w-full border-2 border-slate-200 p-4 rounded-2xl outline-none focus:border-indigo-500 font-bold text-slate-800 transition">
                         </div>
+                        <div>
+                            <label class="block text-[11px] font-black text-slate-400 mb-2 uppercase tracking-widest">5. Key Label (SSCONF)</label>
+                            <input type="text" name="keyLabel" placeholder="e.g. QitoVPN, MyBrand" class="w-full border-2 border-slate-200 p-4 rounded-2xl outline-none focus:border-indigo-500 font-bold text-slate-800 transition">
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-black text-slate-400 mb-2 uppercase tracking-widest">6. Default GB (Bot)</label>
+                            <input type="number" name="defaultGB" value="50" min="1" class="w-full border-2 border-slate-200 p-4 rounded-2xl outline-none focus:border-indigo-500 font-bold text-slate-800 transition">
+                        </div>
                         <div class="flex items-end">
                             <button type="submit" class="w-full bg-slate-800 text-white px-6 py-4 rounded-2xl font-bold hover:bg-black transition shadow-md active:scale-[0.98]">
                                 <i class="fas fa-plus mr-2"></i> Create Group
@@ -1434,7 +1442,7 @@ adminApp.post('/delete-all-masters', async (req, res) => {
 
 adminApp.post('/create-group', async (req, res) => {
     try {
-        const { groupName, masterGroupId, nsRecord, masterIp, masterApiKey, masterName, panelLabel } = req.body;
+        const { groupName, masterGroupId, nsRecord, masterIp, masterApiKey, masterName, panelLabel, keyLabel, defaultGB } = req.body;
         const cleanNsRecord = normalizeHost(nsRecord);
         if (groupName && masterGroupId && cleanNsRecord && masterIp && masterApiKey) { 
             if (!NS_RECORD_HOST_RE.test(cleanNsRecord)) {
@@ -1448,7 +1456,9 @@ adminApp.post('/create-group', async (req, res) => {
                 masterIp: cleanIp,
                 masterApiKey,
                 masterName: masterName || "1",
-                panelLabel: (panelLabel || 'Premium').toString().trim() || 'Premium'
+                panelLabel: (panelLabel || 'Premium').toString().trim() || 'Premium',
+                keyLabel: (keyLabel || '').toString().trim(),
+                defaultGB: Number(defaultGB) > 0 ? Number(defaultGB) : 50
             });
         }
         res.redirect('/admin');
@@ -1465,6 +1475,28 @@ adminApp.post('/update-group-panel-label', async (req, res) => {
         res.redirect('/admin/group/' + encodeURIComponent(groupName));
     } catch (e) {
         res.status(500).send("Error updating panel label");
+    }
+});
+
+adminApp.post('/update-group-key-label', async (req, res) => {
+    try {
+        const groupName = (req.body.groupName || '').toString();
+        const keyLabel = (req.body.keyLabel || '').toString().trim();
+        await Group.updateOne({ name: groupName }, { keyLabel: keyLabel });
+        res.redirect('/admin/group/' + encodeURIComponent(groupName));
+    } catch (e) {
+        res.status(500).send("Error updating key label");
+    }
+});
+
+adminApp.post('/update-group-default-gb', async (req, res) => {
+    try {
+        const groupName = (req.body.groupName || '').toString();
+        const defaultGB = Number(req.body.defaultGB);
+        await Group.updateOne({ name: groupName }, { defaultGB: defaultGB > 0 ? defaultGB : 50 });
+        res.redirect('/admin/group/' + encodeURIComponent(groupName));
+    } catch (e) {
+        res.status(500).send("Error updating default GB");
     }
 });
 
@@ -1538,6 +1570,9 @@ adminApp.get('/group/:name', async (req, res) => {
     const panelHost = normalizedGroupHost || '';
     const groupPanelLabel = (groupInfo && groupInfo.panelLabel ? groupInfo.panelLabel : 'Premium').toString();
     const safeGroupPanelLabel = groupPanelLabel.replace(/"/g, '&quot;');
+    const groupKeyLabel = (groupInfo && groupInfo.keyLabel ? groupInfo.keyLabel : (groupInfo ? groupInfo.name : 'VPN')).toString();
+    const safeGroupKeyLabel = groupKeyLabel.replace(/"/g, '&quot;');
+    const groupDefaultGB = (groupInfo && groupInfo.defaultGB) ? groupInfo.defaultGB : 50;
     const safeNsRecord = (normalizedGroupHost || ((groupInfo && groupInfo.nsRecord) ? groupInfo.nsRecord : '')).replace(/"/g, '&quot;');
     const webhookVersionText = String((groupInfo && groupInfo.lastWebhookVersion) ? groupInfo.lastWebhookVersion : '').trim();
     const webhookServerIdText = String((groupInfo && groupInfo.lastWebhookServerId) ? groupInfo.lastWebhookServerId : '').trim();
@@ -1701,7 +1736,7 @@ adminApp.get('/group/:name', async (req, res) => {
     let usersHtml = '';
     users.forEach((u) => {
         const ssconfLink = domainName
-            ? `ssconf://${domainName}/${u.token}.json#QitoVPN_${encodeURIComponent(u.name.replace(/\s+/g, ''))}`
+            ? `ssconf://${domainName}/${u.token}.json#${encodeURIComponent(groupKeyLabel)}_${encodeURIComponent(u.name.replace(/\s+/g, ''))}`
             : '';
         const webPanelLink = panelHost ? `https://${panelHost}/panel/${u.token}` : '';
         const userNodeKeys = (u.accessKeys && typeof u.accessKeys === 'object') ? Object.keys(u.accessKeys) : [];
@@ -1843,6 +1878,19 @@ adminApp.get('/group/:name', async (req, res) => {
                             <input type="hidden" name="groupName" value="${groupName}">
                             <input type="text" name="panelLabel" value="${safeGroupPanelLabel}" class="w-full border-2 border-yellow-300 bg-white p-3 rounded-2xl outline-none focus:border-yellow-500 font-bold text-sm text-slate-700 transition" placeholder="Panel badge text">
                             <button type="submit" class="w-full bg-slate-800 text-white rounded-2xl py-3.5 font-bold hover:bg-black transition text-sm shadow-md active:scale-[0.98]">Save Panel Badge</button>
+                        </form>
+                        <form action="/admin/update-group-key-label" method="POST" class="flex flex-col gap-3 mt-4 pt-4 border-t border-yellow-200">
+                            <label class="text-[11px] font-black text-yellow-800 uppercase tracking-widest">Key Label (SSCONF link name)</label>
+                            <input type="hidden" name="groupName" value="${groupName}">
+                            <input type="text" name="keyLabel" value="${safeGroupKeyLabel}" class="w-full border-2 border-yellow-300 bg-white p-3 rounded-2xl outline-none focus:border-yellow-500 font-bold text-sm text-slate-700 transition" placeholder="e.g. QitoVPN, MyBrand">
+                            <p class="text-[10px] text-slate-400 font-semibold">SSCONF: ${groupKeyLabel}_username</p>
+                            <button type="submit" class="w-full bg-slate-800 text-white rounded-2xl py-3.5 font-bold hover:bg-black transition text-sm shadow-md active:scale-[0.98]">Save Key Label</button>
+                        </form>
+                        <form action="/admin/update-group-default-gb" method="POST" class="flex flex-col gap-3 mt-4 pt-4 border-t border-yellow-200">
+                            <label class="text-[11px] font-black text-yellow-800 uppercase tracking-widest">Default GB (Bot Key Generation)</label>
+                            <input type="hidden" name="groupName" value="${groupName}">
+                            <input type="number" name="defaultGB" value="${groupDefaultGB}" min="1" class="w-full border-2 border-yellow-300 bg-white p-3 rounded-2xl outline-none focus:border-yellow-500 font-bold text-sm text-slate-700 transition">
+                            <button type="submit" class="w-full bg-slate-800 text-white rounded-2xl py-3.5 font-bold hover:bg-black transition text-sm shadow-md active:scale-[0.98]">Save Default GB</button>
                         </form>
                         <form action="/admin/update-group-ns-record" method="POST" class="flex flex-col gap-3 mt-4 pt-4 border-t border-yellow-200">
                             <label class="text-[11px] font-black text-yellow-800 uppercase tracking-widest">Custom DNS (ssconf + panel links)</label>

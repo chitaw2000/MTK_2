@@ -8,6 +8,8 @@ const groupSchema = new mongoose.Schema({
     masterApiKey: { type: String, required: true },
     masterName: { type: String, default: "1" }, // 🌟 API နံပါတ် မှတ်ရန် အသစ်
     panelLabel: { type: String, default: "Premium" },
+    keyLabel: { type: String, default: '' },
+    defaultGB: { type: Number, default: 50 },
     lastWebhookVersion: { type: String, default: '' },
     lastWebhookServerId: { type: String, default: '' },
     lastWebhookReceivedAt: { type: Date, default: null },

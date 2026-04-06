@@ -389,8 +389,9 @@ userApp.get('/panel/:token', async (req, res) => {
         const isExpired = user.usedGB >= user.totalGB || today > expDate;
 
         const encodedName = encodeURIComponent(user.name.replace(/\s+/g, ''));
+        const keyLabel = (group && group.keyLabel) ? group.keyLabel : (group && group.name ? group.name : 'VPN');
         const ssconfLink = domainName
-            ? `ssconf://${domainName}/${token}.json#QitoVPN_${encodedName}`
+            ? `ssconf://${domainName}/${token}.json#${encodeURIComponent(keyLabel)}_${encodedName}`
             : ''; 
 
         let nodesListHtml = '';
