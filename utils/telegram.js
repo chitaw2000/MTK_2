@@ -101,12 +101,11 @@ function initTelegramBot(token, adminId) {
                 masterIp: group.masterIp,
                 masterApiKey: group.masterApiKey,
                 nsRecord: group.nsRecord,
-                keyLabel: group.keyLabel || group.name,
-                defaultGB: group.defaultGB || 50
+                keyLabel: group.keyLabel || group.name
             });
             selectingGroup = false;
             bot.sendMessage(msg.chat.id,
-                `✅ Active Group: *${group.name}*\nDefault GB: ${group.defaultGB || 50}\nKey Label: ${group.keyLabel || group.name}\n\n🔑 Key ထုတ်ရန် \`username days\` ရိုက်ပါ\nဥပမာ: \`mtk 30\``,
+                `✅ Active Group: *${group.name}*\nKey Label: ${group.keyLabel || group.name}\n\n🔑 Key ထုတ်ရန် \`username GB days\` ရိုက်ပါ\nဥပမာ: \`mtk 50 30\``,
                 { parse_mode: 'Markdown', ...getMainKeyboard(adminId) }
             );
             return;
@@ -134,24 +133,24 @@ function initTelegramBot(token, adminId) {
                 return;
             }
             bot.sendMessage(msg.chat.id,
-                `📂 Group: *${g.groupName}*\n📊 Default: ${g.defaultGB} GB\n\n✏️ \`username days\` ရိုက်ပါ\nGB ထည့်ချင်ရင် \`username days gb\`\n\nExample:\n\`mtk 30\` → mtk, 30 ရက်, ${g.defaultGB}GB\n\`mtk 30 100\` → mtk, 30 ရက်, 100GB`,
+                `📂 Group: *${g.groupName}*\n\n✏️ \`username GB days\` ရိုက်ပါ\n\nExample:\n\`mtk 50 30\` → mtk, 50GB, 30 ရက်`,
                 { parse_mode: 'Markdown', ...getMainKeyboard(adminId) }
             );
             return;
         }
 
-        // ── Key generation: "username days" or "username days gb" ──
+        // ── Key generation: "username GB days" ──
         const g = activeGroup.get(adminId);
         if (!g) return;
 
         const parts = text.split(/\s+/);
-        if (parts.length < 2) return;
+        if (parts.length < 3) return;
 
         const rawName = parts[0];
-        const days = parseInt(parts[1], 10);
-        if (!rawName || isNaN(days) || days <= 0) return;
+        const totalGB = Number(parts[1]);
+        const days = parseInt(parts[2], 10);
+        if (!rawName || isNaN(totalGB) || totalGB <= 0 || isNaN(days) || days <= 0) return;
 
-        const totalGB = (parts.length >= 3 && Number(parts[2]) > 0) ? Number(parts[2]) : g.defaultGB;
         const username = rawName.replace(/\s+/g, '_');
 
         if (username.length < 2) {
@@ -213,14 +212,14 @@ function initTelegramBot(token, adminId) {
                 const panelLink = domainName ? `https://${domainName}/panel/${userToken}` : '';
 
                 let resultMsg = `✅ *Key ထုတ်ပြီးပါပြီ!*\n\n`;
-                resultMsg += `👤 Username: \`${username}\`\n`;
-                resultMsg += `📂 Group: ${g.groupName}\n`;
-                resultMsg += `📊 Data: ${totalGB} GB\n`;
-                resultMsg += `📅 Expiry: ${expireDate} (${days} days)\n`;
-                resultMsg += `🌐 Nodes: ${nodeCount}\n`;
-                resultMsg += `🔑 Token: \`${userToken}\`\n`;
-                if (panelLink) resultMsg += `\n🌐 Panel: ${panelLink}`;
-                if (ssconfLink) resultMsg += `\n📱 SSCONF: \`${ssconfLink}\``;
+                resultMsg += `🌐 Key No.      :  ${nextNo}\n`;
+                resultMsg += `👤 Username  :  ${username}\n`;
+                resultMsg += `📂 Group         :  ${g.groupName}\n`;
+                resultMsg += `📊 Data            :  ${totalGB} GB\n`;
+                resultMsg += `📅 Expiry         :  ${expireDate} (${days} days)\n`;
+                resultMsg += `\n🔓 Token: \`${userToken}\`\n`;
+                if (panelLink) resultMsg += `\n🌐 Panel          : ${panelLink}`;
+                if (ssconfLink) resultMsg += `\n📱 SSCONF      : \`${ssconfLink}\``;
 
                 bot.sendMessage(msg.chat.id, resultMsg, { parse_mode: 'Markdown', ...getMainKeyboard(adminId) });
             } else {
