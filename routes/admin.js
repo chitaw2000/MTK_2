@@ -1500,6 +1500,17 @@ adminApp.post('/update-group-default-gb', async (req, res) => {
     }
 });
 
+adminApp.post('/update-group-server-note', async (req, res) => {
+    try {
+        const groupName = (req.body.groupName || '').toString();
+        const panelServerNote = (req.body.panelServerNote || '').toString().trim();
+        await Group.updateOne({ name: groupName }, { panelServerNote });
+        res.redirect('/admin/group/' + encodeURIComponent(groupName));
+    } catch (e) {
+        res.status(500).send("Error updating server note");
+    }
+});
+
 const NS_RECORD_HOST_RE = /^[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?$/;
 
 adminApp.post('/update-group-ns-record', async (req, res) => {
@@ -1573,6 +1584,7 @@ adminApp.get('/group/:name', async (req, res) => {
     const groupKeyLabel = (groupInfo && groupInfo.keyLabel ? groupInfo.keyLabel : (groupInfo ? groupInfo.name : 'VPN')).toString();
     const safeGroupKeyLabel = groupKeyLabel.replace(/"/g, '&quot;');
     const groupDefaultGB = (groupInfo && groupInfo.defaultGB) ? groupInfo.defaultGB : 50;
+    const safePanelServerNote = ((groupInfo && groupInfo.panelServerNote) ? groupInfo.panelServerNote : '').replace(/"/g, '&quot;');
     const safeNsRecord = (normalizedGroupHost || ((groupInfo && groupInfo.nsRecord) ? groupInfo.nsRecord : '')).replace(/"/g, '&quot;');
     const webhookVersionText = String((groupInfo && groupInfo.lastWebhookVersion) ? groupInfo.lastWebhookVersion : '').trim();
     const webhookServerIdText = String((groupInfo && groupInfo.lastWebhookServerId) ? groupInfo.lastWebhookServerId : '').trim();
@@ -1897,6 +1909,13 @@ adminApp.get('/group/:name', async (req, res) => {
                             <input type="hidden" name="groupName" value="${groupName}">
                             <input type="text" name="nsRecord" value="${safeNsRecord}" required class="w-full border-2 border-indigo-300 bg-white p-3 rounded-2xl outline-none focus:border-indigo-500 font-mono text-sm text-slate-700 transition" placeholder="e.g. ns1.yourdomain.com">
                             <button type="submit" class="w-full bg-indigo-600 text-white rounded-2xl py-3.5 font-bold hover:bg-indigo-700 transition text-sm shadow-md active:scale-[0.98]">Save Custom DNS</button>
+                        </form>
+                        <form action="/admin/update-group-server-note" method="POST" class="flex flex-col gap-3 mt-4 pt-4 border-t border-yellow-200">
+                            <label class="text-[11px] font-black text-yellow-800 uppercase tracking-widest">User Panel Custom Text (emoji OK)</label>
+                            <input type="hidden" name="groupName" value="${groupName}">
+                            <input type="text" name="panelServerNote" value="${safePanelServerNote}" class="w-full border-2 border-yellow-300 bg-white p-3 rounded-2xl outline-none focus:border-yellow-500 font-bold text-sm text-slate-700 transition" placeholder="e.g. Singapore 🇸🇬">
+                            <p class="text-[10px] text-slate-400 font-semibold">User panel မှာ server list အပေါ်မှာ ပြမယ့်စာ</p>
+                            <button type="submit" class="w-full bg-slate-800 text-white rounded-2xl py-3.5 font-bold hover:bg-black transition text-sm shadow-md active:scale-[0.98]">Save Custom Text</button>
                         </form>
                     </div>
                 </div>

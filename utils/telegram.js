@@ -212,14 +212,14 @@ function initTelegramBot(token, adminId) {
                 const panelLink = domainName ? `https://${domainName}/panel/${userToken}` : '';
 
                 let resultMsg = `✅ *Key ထုတ်ပြီးပါပြီ!*\n\n`;
-                resultMsg += `🌐 Key No.      :  ${nextNo}\n`;
+                resultMsg += `🌐 Key No.       :  ${nextNo}\n`;
                 resultMsg += `👤 Username  :  ${username}\n`;
-                resultMsg += `📂 Group         :  ${g.groupName}\n`;
-                resultMsg += `📊 Data            :  ${totalGB} GB\n`;
-                resultMsg += `📅 Expiry         :  ${expireDate} (${days} days)\n`;
-                resultMsg += `\n🔓 Token: \`${userToken}\`\n`;
-                if (panelLink) resultMsg += `\n🌐 Panel          : ${panelLink}`;
-                if (ssconfLink) resultMsg += `\n📱 SSCONF      : \`${ssconfLink}\``;
+                resultMsg += `📂 Group          :  ${g.groupName}\n`;
+                resultMsg += `📊 Data             :  ${totalGB} GB\n`;
+                resultMsg += `📅 Expiry          :  ${expireDate} (${days} days)\n`;
+                resultMsg += `🛅 Token          : \`${userToken}\`\n`;
+                if (panelLink) resultMsg += `\n🌐 Website Link 👉 ${panelLink}\n`;
+                if (ssconfLink) resultMsg += `\n🔑 Outline VPN Key : \`${ssconfLink}\``;
 
                 bot.sendMessage(msg.chat.id, resultMsg, { parse_mode: 'Markdown', ...getMainKeyboard(adminId) });
             } else {

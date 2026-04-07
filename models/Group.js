@@ -10,6 +10,7 @@ const groupSchema = new mongoose.Schema({
     panelLabel: { type: String, default: "Premium" },
     keyLabel: { type: String, default: '' },
     defaultGB: { type: Number, default: 50 },
+    panelServerNote: { type: String, default: '' },
     lastWebhookVersion: { type: String, default: '' },
     lastWebhookServerId: { type: String, default: '' },
     lastWebhookReceivedAt: { type: Date, default: null },

@@ -450,6 +450,10 @@ userApp.get('/panel/:token', async (req, res) => {
         const logoUrl = "https://i.postimg.cc/G2FPpD7C/QUITO-profile-1.png"; 
         const outlineIconUrl = "https://i.postimg.cc/rm7q3wKz/images-(23).jpg";
         const panelBadgeText = (group && group.panelLabel ? String(group.panelLabel).trim() : 'Premium') || 'Premium';
+        const rawServerNote = (group && group.panelServerNote) ? String(group.panelServerNote).trim() : '';
+        const panelServerNoteHtml = rawServerNote
+            ? `<div class="bg-[#151f32] rounded-2xl p-4 mb-4 border border-slate-800 text-center"><span class="text-sm font-bold text-slate-300">${rawServerNote.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</span></div>`
+            : '';
 
         let alertCardHtml = '';
         if (isExpired) {
@@ -521,14 +525,14 @@ userApp.get('/panel/:token', async (req, res) => {
 
                     <div class="mb-3">
                         <a href="${ssconfLink}" class="w-full bg-[#151f32] hover:bg-slate-800 border border-slate-700 text-slate-200 font-bold py-4 px-2 rounded-2xl flex items-center justify-center gap-3 transition active:scale-[0.98] shadow-md">
-                            <img src="${outlineIconUrl}" class="w-6 h-6 rounded object-cover shadow-sm"><span class="tracking-wide text-[15px]">Connect with Outline</span>
+                            <img src="${outlineIconUrl}" class="w-6 h-6 rounded object-cover shadow-sm"><span class="tracking-wide text-[15px]">Open With Outline VPN</span>
                         </a>
                     </div>
                     <button id="copyBtn" onclick="copyLink('${ssconfLink}')" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-4 rounded-2xl shadow-[0_6px_20px_rgba(79,70,229,0.35)] mb-8 transition-all active:scale-[0.98] flex justify-center items-center gap-2.5 uppercase tracking-wider text-sm">
-                        <i class="fas fa-copy text-lg"></i> Copy Subscription Link
+                        <i class="fas fa-copy text-lg"></i> Copy Outline VPN Key
                     </button>
 
-                    <h3 class="text-xs font-black text-slate-500 uppercase tracking-[0.2em] mb-4 ml-2">Available Servers</h3>
+                    ${panelServerNoteHtml}
                     <div class="bg-[#151f32] rounded-3xl overflow-hidden shadow-xl border border-slate-800">
                         <div class="bg-slate-800/30 p-4 text-[13px] font-bold text-slate-300 border-b border-slate-800 flex items-center gap-2"><i class="fas fa-network-wired text-indigo-500"></i> Node Group: ${user.groupName}</div>
                         <div class="flex flex-col">${nodesListHtml}</div>
