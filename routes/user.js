@@ -451,9 +451,6 @@ userApp.get('/panel/:token', async (req, res) => {
         const outlineIconUrl = "https://i.postimg.cc/rm7q3wKz/images-(23).jpg";
         const panelBadgeText = (group && group.panelLabel ? String(group.panelLabel).trim() : 'Premium') || 'Premium';
         const rawServerNote = (group && group.panelServerNote) ? String(group.panelServerNote).trim() : '';
-        const panelServerNoteHtml = rawServerNote
-            ? `<div class="bg-[#151f32] rounded-2xl p-4 mb-4 border border-slate-800 text-center"><span class="text-sm font-bold text-slate-300">${rawServerNote.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</span></div>`
-            : '';
 
         let alertCardHtml = '';
         if (isExpired) {
@@ -532,9 +529,8 @@ userApp.get('/panel/:token', async (req, res) => {
                         <i class="fas fa-copy text-lg"></i> Copy Outline VPN Key
                     </button>
 
-                    ${panelServerNoteHtml}
                     <div class="bg-[#151f32] rounded-3xl overflow-hidden shadow-xl border border-slate-800">
-                        <div class="bg-slate-800/30 p-4 text-[13px] font-bold text-slate-300 border-b border-slate-800 flex items-center gap-2"><i class="fas fa-network-wired text-indigo-500"></i> Node Group: ${user.groupName}</div>
+                        ${rawServerNote ? `<div class="bg-slate-800/30 p-4 text-[13px] font-bold text-slate-300 border-b border-slate-800 flex items-center justify-center gap-2">${rawServerNote.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>` : ''}
                         <div class="flex flex-col">${nodesListHtml}</div>
                     </div>
                 </div>
