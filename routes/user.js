@@ -991,7 +991,11 @@ async function syncUserUsageHandler(req, res) {
         }
 
         await user.save();
-        console.log('[sync-user-usage] updated', { user: user.name, usedGB: user.usedGB, totalGB: user.totalGB });
+        if (nodeActiveUsersRaw !== undefined || nodeRaw || isActiveRaw !== undefined) {
+            console.log('[sync-user-usage] node-fields', { user: user.name, node: nodeRaw, nodeActiveUsers: nodeActiveUsersRaw, isActive: isActiveRaw, group: groupRaw, cacheKey: nodeRaw ? `${user.groupName}:${nodeRaw}` : 'none' });
+        } else {
+            console.log('[sync-user-usage] updated (no node fields)', { user: user.name, rawKeys: Object.keys(req.body || {}).join(',') });
+        }
         return res.json({ success: true, message: "Usage synced successfully" });
     } catch (error) {
         const status = error && error.statusCode ? error.statusCode : 500;
