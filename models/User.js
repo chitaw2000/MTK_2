@@ -12,7 +12,11 @@ const userSchema = new mongoose.Schema({
     expireDate: String,
     accessKeys: Object,
     serverLabels: Object,
-    userNo: Number // 🌟 မပြောင်းလဲသော ကိုယ်ပိုင် ID 
+    userNo: Number,
+    isActive: { type: Boolean, default: false },
+    lastSyncNode: { type: String, default: '' },
+    activeOnIps: { type: [String], default: [] },
+    lastSyncAt: { type: Date, default: null }
 });
 
 module.exports = mongoose.model('User', userSchema);

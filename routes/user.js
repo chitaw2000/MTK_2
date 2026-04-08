@@ -53,6 +53,11 @@ async function fetchWithRetry(url, data, config, retries = 3, delay = 1000) {
     }
 }
 
+const nodeActiveUsersCache = new Map();
+function getNodeActiveUsers(groupName, nodeId) {
+    return nodeActiveUsersCache.get(`${groupName}:${nodeId}`) || 0;
+}
+
 const Setting = require('../models/Setting');
 let _cachedGlobalApiKey = null;
 let _cachedGlobalApiKeyAt = 0;
@@ -407,6 +412,7 @@ userApp.get('/panel/:token', async (req, res) => {
                 // Keep nodes that were not ping-checked to avoid hiding new keys on large lists.
                 renderNodeKeys = renderNodeKeys.filter((k) => !activeProbe.checkedKeys.has(k) || activeProbe.activeKeys.has(k));
             }
+            const groupNameForCache = user.groupName || '';
             renderNodeKeys.forEach(serverName => {
                 const rawSavedLabel = (user.serverLabels && user.serverLabels[serverName]) ? String(user.serverLabels[serverName]).trim() : '';
                 const serverDisplayName = (rawSavedLabel && rawSavedLabel !== serverName)
@@ -416,6 +422,10 @@ userApp.get('/panel/:token', async (req, res) => {
                 const safeNodeId = serverName.replace(/[^a-zA-Z0-9_-]/g, '-');
                 nodeEntries.push({ key: serverName, safeId: safeNodeId });
                 const isSelected = user.currentServer === serverName;
+                const nodeActiveCount = getNodeActiveUsers(groupNameForCache, serverName);
+                const activeUsersHtml = nodeActiveCount > 0
+                    ? `<span class="text-[11px] font-bold text-emerald-400 flex items-center gap-1"><i class="fas fa-users text-[10px]"></i> ${nodeActiveCount}</span>`
+                    : '';
                 
                 const activeClass = isSelected ? 'bg-indigo-900/30 border-l-4 border-indigo-500' : 'hover:bg-slate-800/50';
                 const iconColor = isSelected ? 'text-indigo-400' : 'text-slate-400';
@@ -431,6 +441,7 @@ userApp.get('/panel/:token', async (req, res) => {
                             <div class="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center border border-slate-700"><i class="fas fa-globe ${iconColor} text-sm"></i></div>
                             <div class="flex flex-col items-start leading-tight">
                                 <span class="font-bold ${isSelected ? 'text-white' : 'text-slate-300'} text-[15px] tracking-wide">${serverDisplayName}</span>
+                                ${activeUsersHtml}
                             </div>
                         </div>
                         <div class="flex items-center gap-4">
@@ -958,7 +969,25 @@ async function syncUserUsageHandler(req, res) {
         if (remainingGb !== undefined) user.remainingGB = remainingGb;
         if (parsedBlocked !== undefined) user.isBlocked = parsedBlocked;
         if (expireDate !== undefined) user.expireDate = String(expireDate);
-        
+
+        const isActiveRaw = getFirstValue(lookup, ['isactive', 'active']);
+        const nodeRaw = getFirstValue(lookup, ['node', 'nodeid', 'serverid']);
+        const groupRaw = getFirstValue(lookup, ['group', 'groupid', 'masterGroupId'.toLowerCase()]);
+        const activeOnIpsRaw = lookup['activeonips'] || lookup['activeips'];
+        const nodeActiveUsersRaw = readStrictNumericField(lookup, ['nodeactiveusers', 'activeusers', 'activeusercount'], 'nodeActiveUsers');
+
+        const parsedIsActive = parseBoolean(isActiveRaw);
+        if (parsedIsActive !== undefined) user.isActive = parsedIsActive;
+        if (nodeRaw) user.lastSyncNode = String(nodeRaw);
+        if (Array.isArray(activeOnIpsRaw)) user.activeOnIps = activeOnIpsRaw;
+        user.lastSyncAt = new Date();
+
+        if (nodeActiveUsersRaw !== undefined && (nodeRaw || user.lastSyncNode)) {
+            const cacheGroup = groupRaw || user.groupName || '';
+            const cacheNode = String(nodeRaw || user.lastSyncNode);
+            nodeActiveUsersCache.set(`${cacheGroup}:${cacheNode}`, nodeActiveUsersRaw);
+        }
+
         await user.save();
         console.log('[sync-user-usage] updated', { user: user.name, usedGB: user.usedGB, totalGB: user.totalGB });
         return res.json({ success: true, message: "Usage synced successfully" });
