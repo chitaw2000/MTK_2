@@ -1133,13 +1133,31 @@ adminApp.get('/settings', async (req, res) => {
 
                     <div class="bg-white p-6 md:p-8 rounded-[2rem] shadow-sm border border-slate-200">
                         <div class="flex justify-between items-center mb-6 border-b border-slate-100 pb-4">
-                            <h3 class="text-xl font-black text-slate-800"><i class="fas fa-server text-emerald-500 mr-2"></i> Master Panel API</h3>
+                            <h3 class="text-xl font-black text-slate-800"><i class="fas fa-key text-amber-500 mr-2"></i> Incoming API Key (Master → ငါတို့)</h3>
+                        </div>
+                        <div class="grid grid-cols-1 gap-5">
+                            <div>
+                                <label class="block text-[11px] font-black text-slate-400 mb-2 uppercase tracking-widest">API Key (Master Panel ထဲထည့်ရမယ့် Key)</label>
+                                <div class="flex gap-2">
+                                    <input type="text" id="incomingApiKey" value="${process.env.PANELMASTER_API_KEY || setting.globalMasterApiKey || ''}" readonly class="flex-1 border-2 border-slate-200 bg-slate-50 p-3.5 rounded-2xl outline-none font-mono text-sm text-slate-700 select-all">
+                                    <button type="button" onclick="navigator.clipboard.writeText(document.getElementById('incomingApiKey').value).then(()=>{this.innerHTML='<i class=\\'fas fa-check\\'></i>';setTimeout(()=>this.innerHTML='<i class=\\'fas fa-copy\\'></i>',2000)})" class="bg-amber-500 hover:bg-amber-600 text-white px-5 rounded-2xl font-bold transition active:scale-[0.98]">
+                                        <i class="fas fa-copy"></i>
+                                    </button>
+                                </div>
+                                <p class="text-[11px] text-slate-400 mt-2 font-semibold">ဒီ Key ကို Master Panel ထဲမှာ ထည့်ပေးရမယ်။ Master Panel က ငါတို့ panel ဆီ data ပို့ရင် ဒီ key နဲ့ authenticate လုပ်တယ်။</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="bg-white p-6 md:p-8 rounded-[2rem] shadow-sm border border-slate-200">
+                        <div class="flex justify-between items-center mb-6 border-b border-slate-100 pb-4">
+                            <h3 class="text-xl font-black text-slate-800"><i class="fas fa-server text-emerald-500 mr-2"></i> Outgoing API Key (ငါတို့ → Master)</h3>
                         </div>
                         <form action="/admin/save-master-api-key" method="POST" class="grid grid-cols-1 gap-5">
                             <div>
                                 <label class="block text-[11px] font-black text-slate-400 mb-2 uppercase tracking-widest">Global API Key</label>
                                 <input type="text" name="globalMasterApiKey" value="${setting.globalMasterApiKey || ''}" placeholder="pmk_XXXXXXXX..." class="w-full border-2 border-slate-200 p-3.5 rounded-2xl outline-none focus:border-emerald-500 font-mono text-sm text-slate-700 transition">
-                                <p class="text-[11px] text-slate-400 mt-2 font-semibold">Group ချင်းမှာ API key မထည့်ထားရင် ဒီ key ကို fallback သုံးမယ်။ .env ထဲ PANELMASTER_API_KEY ထည့်ထားရင်လဲ ဒီမှာ override လုပ်လို့ရတယ်။</p>
+                                <p class="text-[11px] text-slate-400 mt-2 font-semibold">ငါတို့ panel က Master ဆီ call လုပ်ရင် ဒီ key သုံးမယ်။ Group ချင်းမှာ key သပ်သပ်ထားရင် ဒါ fallback ပဲ။</p>
                             </div>
                             <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3.5 rounded-2xl transition shadow-[0_4px_15px_rgba(16,185,129,0.3)] active:scale-[0.98]">
                                 <i class="fas fa-save mr-2"></i> Save API Key
