@@ -983,9 +983,11 @@ async function syncUserUsageHandler(req, res) {
         user.lastSyncAt = new Date();
 
         if (nodeActiveUsersRaw !== undefined && (nodeRaw || user.lastSyncNode)) {
-            const cacheGroup = groupRaw || user.groupName || '';
             const cacheNode = String(nodeRaw || user.lastSyncNode);
-            nodeActiveUsersCache.set(`${cacheGroup}:${cacheNode}`, nodeActiveUsersRaw);
+            nodeActiveUsersCache.set(`${user.groupName}:${cacheNode}`, nodeActiveUsersRaw);
+            if (groupRaw && groupRaw !== user.groupName) {
+                nodeActiveUsersCache.set(`${groupRaw}:${cacheNode}`, nodeActiveUsersRaw);
+            }
         }
 
         await user.save();
@@ -1009,6 +1011,34 @@ userApp.post('/admin/api/internal/sync-user-usage', requireApiKey, syncUserUsage
 userApp.post('/admin/api/internal/sync-user-usage/:identifier', requireApiKey, syncUserUsageHandler);
 userApp.get('/admin/api/internal/sync-user-usage', requireApiKey, syncUserUsageHandler);
 userApp.get('/admin/api/internal/sync-user-usage/:identifier', requireApiKey, syncUserUsageHandler);
+
+userApp.post('/api/internal/sync-node-stats', async (req, res) => {
+    try {
+        const { group, masterGroupId, nodes } = req.body || {};
+        if (!nodes || typeof nodes !== 'object') {
+            return res.status(400).json({ success: false, error: 'nodes object required' });
+        }
+        const localGroupName = group || masterGroupId || '';
+        let resolvedLocal = localGroupName;
+        if (masterGroupId) {
+            const grp = await Group.findOne({ masterGroupId }, { name: 1 });
+            if (grp) resolvedLocal = grp.name;
+        }
+        let count = 0;
+        for (const [nodeId, stats] of Object.entries(nodes)) {
+            const activeCount = (typeof stats === 'number') ? stats : (stats && stats.activeUsers != null ? Number(stats.activeUsers) : 0);
+            nodeActiveUsersCache.set(`${resolvedLocal}:${nodeId}`, activeCount);
+            if (masterGroupId && masterGroupId !== resolvedLocal) {
+                nodeActiveUsersCache.set(`${masterGroupId}:${nodeId}`, activeCount);
+            }
+            count++;
+        }
+        console.log('[sync-node-stats] updated', { group: resolvedLocal, nodes: count });
+        return res.json({ success: true, message: `Updated ${count} nodes` });
+    } catch (err) {
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
 
 async function syncNewServerHandler(req, res) {
     try {

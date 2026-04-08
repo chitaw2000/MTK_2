@@ -33,7 +33,7 @@ setupSessionAndCsrf(adminApp, {
 });
 setupSessionAndCsrf(userApp, {
     sessionName: 'qito_user_session_id',
-    csrfIgnorePaths: ['/sync-new-server', '/sync-user-usage']
+    csrfIgnorePaths: ['/sync-new-server', '/sync-user-usage', '/sync-node-stats']
 });
 
 // Apply API rate limiting to non-internal API routes only.
