@@ -1003,7 +1003,7 @@ adminApp.get('/settings', async (req, res) => {
 
     let setting = await Setting.findOne({});
     if (!setting) {
-        setting = { botToken: '', adminId: '', backupIntervalMinutes: 60, adminUsername: 'admin', otpEnabled: false, globalMasterApiKey: '' };
+        setting = { botToken: '', adminId: '', backupIntervalMinutes: 60, adminUsername: 'admin', otpEnabled: false, globalMasterApiKey: '', incomingApiKey: '' };
     }
 
     const renderBackupItem = (b, type) => {
@@ -1139,13 +1139,18 @@ adminApp.get('/settings', async (req, res) => {
                             <div>
                                 <label class="block text-[11px] font-black text-slate-400 mb-2 uppercase tracking-widest">API Key (Master Panel ထဲထည့်ရမယ့် Key)</label>
                                 <div class="flex gap-2">
-                                    <input type="text" id="incomingApiKey" value="${process.env.PANELMASTER_API_KEY || setting.globalMasterApiKey || ''}" readonly class="flex-1 border-2 border-slate-200 bg-slate-50 p-3.5 rounded-2xl outline-none font-mono text-sm text-slate-700 select-all">
-                                    <button type="button" onclick="navigator.clipboard.writeText(document.getElementById('incomingApiKey').value).then(()=>{this.innerHTML='<i class=\\'fas fa-check\\'></i>';setTimeout(()=>this.innerHTML='<i class=\\'fas fa-copy\\'></i>',2000)})" class="bg-amber-500 hover:bg-amber-600 text-white px-5 rounded-2xl font-bold transition active:scale-[0.98]">
+                                    <input type="text" id="incomingApiKeyField" value="${setting.incomingApiKey || ''}" readonly class="flex-1 border-2 border-slate-200 bg-slate-50 p-3.5 rounded-2xl outline-none font-mono text-sm text-slate-700 select-all" placeholder="Generate နှိပ်ပြီး Key ထုတ်ပါ">
+                                    <button type="button" onclick="navigator.clipboard.writeText(document.getElementById('incomingApiKeyField').value).then(()=>{this.innerHTML='<i class=\\'fas fa-check\\'></i>';setTimeout(()=>this.innerHTML='<i class=\\'fas fa-copy\\'></i>',2000)})" class="bg-amber-500 hover:bg-amber-600 text-white px-5 rounded-2xl font-bold transition active:scale-[0.98]" title="Copy">
                                         <i class="fas fa-copy"></i>
                                     </button>
                                 </div>
-                                <p class="text-[11px] text-slate-400 mt-2 font-semibold">ဒီ Key ကို Master Panel ထဲမှာ ထည့်ပေးရမယ်။ Master Panel က ငါတို့ panel ဆီ data ပို့ရင် ဒီ key နဲ့ authenticate လုပ်တယ်။</p>
+                                <p class="text-[11px] text-slate-400 mt-2 font-semibold">ဒီ Key ကို Copy လုပ်ပြီး Master Panel ထဲမှာ ထည့်ပေးပါ။ Master Panel က ငါတို့ panel ဆီ data ပို့ရင် ဒီ key နဲ့ authenticate လုပ်တယ်။</p>
                             </div>
+                            <form action="/admin/generate-incoming-api-key" method="POST" class="m-0" onsubmit="return confirm('Key အသစ် Generate လုပ်ရင် အဟောင်း သုံးလို့ မရတော့ပါ။ Master Panel ဘက်မှာလဲ key အသစ်ပြန်ထည့်ရပါမယ်။ ဆက်လုပ်မှာ သေချာပြီလား?');">
+                                <button type="submit" class="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-3.5 rounded-2xl transition shadow-[0_4px_15px_rgba(245,158,11,0.3)] active:scale-[0.98]">
+                                    <i class="fas fa-sync-alt mr-2"></i> ${setting.incomingApiKey ? 'Regenerate API Key' : 'Generate API Key'}
+                                </button>
+                            </form>
                         </div>
                     </div>
 
@@ -1251,6 +1256,17 @@ adminApp.post('/save-telegram-settings', async (req, res) => {
         res.send(`<script>alert('✅ Telegram Settings Saved! Login OTP: ${otpState}'); window.location.href='/admin/settings';</script>`);
     } catch(e) { 
         res.status(500).send("Error saving settings"); 
+    }
+});
+
+adminApp.post('/generate-incoming-api-key', async (req, res) => {
+    try {
+        const crypto = require('crypto');
+        const newKey = 'pmk_' + crypto.randomBytes(32).toString('base64url');
+        await Setting.findOneAndUpdate({}, { $set: { incomingApiKey: newKey } }, { upsert: true, new: true });
+        res.send(`<script>alert('✅ API Key Generated!\\n\\nKey: ${newKey}\\n\\nMaster Panel ထဲမှာ ဒီ key ထည့်ပေးပါ။'); window.location.href='/admin/settings';</script>`);
+    } catch (e) {
+        res.status(500).send('Error generating API key');
     }
 });
 

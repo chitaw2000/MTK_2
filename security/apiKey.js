@@ -10,6 +10,7 @@ function createApiKey() {
 }
 
 let _cachedGlobalKey = null;
+let _cachedIncomingKey = null;
 let _cachedAt = 0;
 
 async function requireApiKey(req, res, next) {
@@ -36,12 +37,14 @@ async function requireApiKey(req, res, next) {
 
     if (!_cachedGlobalKey || Date.now() - _cachedAt > 60000) {
         try {
-            const s = await Setting.findOne({}, { globalMasterApiKey: 1 });
+            const s = await Setting.findOne({}, { globalMasterApiKey: 1, incomingApiKey: 1 });
             _cachedGlobalKey = (s && s.globalMasterApiKey) || '';
+            _cachedIncomingKey = (s && s.incomingApiKey) || '';
             _cachedAt = Date.now();
         } catch (e) {}
     }
     if (_cachedGlobalKey && providedKey === _cachedGlobalKey) return next();
+    if (_cachedIncomingKey && providedKey === _cachedIncomingKey) return next();
 
     const validMaster = await Master.findOne({ apiKey: providedKey });
     const validGroup = await Group.findOne({ masterApiKey: providedKey });

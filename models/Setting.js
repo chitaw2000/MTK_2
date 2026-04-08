@@ -7,7 +7,8 @@ const settingSchema = new mongoose.Schema({
     adminUsername: { type: String, default: 'admin' },
     adminPasswordHash: { type: String, default: '' },
     otpEnabled: { type: Boolean, default: false },
-    globalMasterApiKey: { type: String, default: '' }
+    globalMasterApiKey: { type: String, default: '' },
+    incomingApiKey: { type: String, default: '' }
 });
 
 module.exports = mongoose.model('Setting', settingSchema);
