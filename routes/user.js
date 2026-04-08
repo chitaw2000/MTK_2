@@ -1015,6 +1015,7 @@ userApp.get('/admin/api/internal/sync-user-usage/:identifier', requireApiKey, sy
 userApp.post('/api/internal/sync-node-stats', async (req, res) => {
     try {
         const { group, masterGroupId, nodes } = req.body || {};
+        console.log('[sync-node-stats] received', JSON.stringify({ group, masterGroupId, nodeKeys: nodes ? Object.keys(nodes) : null }));
         if (!nodes || typeof nodes !== 'object') {
             return res.status(400).json({ success: false, error: 'nodes object required' });
         }
@@ -1023,21 +1024,49 @@ userApp.post('/api/internal/sync-node-stats', async (req, res) => {
         if (masterGroupId) {
             const grp = await Group.findOne({ masterGroupId }, { name: 1 });
             if (grp) resolvedLocal = grp.name;
+            console.log('[sync-node-stats] group resolve', { masterGroupId, resolvedLocal, found: !!grp });
         }
         let count = 0;
+        const cached = {};
         for (const [nodeId, stats] of Object.entries(nodes)) {
             const activeCount = (typeof stats === 'number') ? stats : (stats && stats.activeUsers != null ? Number(stats.activeUsers) : 0);
-            nodeActiveUsersCache.set(`${resolvedLocal}:${nodeId}`, activeCount);
+            const key = `${resolvedLocal}:${nodeId}`;
+            nodeActiveUsersCache.set(key, activeCount);
+            cached[key] = activeCount;
             if (masterGroupId && masterGroupId !== resolvedLocal) {
-                nodeActiveUsersCache.set(`${masterGroupId}:${nodeId}`, activeCount);
+                const key2 = `${masterGroupId}:${nodeId}`;
+                nodeActiveUsersCache.set(key2, activeCount);
+                cached[key2] = activeCount;
             }
             count++;
         }
-        console.log('[sync-node-stats] updated', { group: resolvedLocal, nodes: count });
-        return res.json({ success: true, message: `Updated ${count} nodes` });
+        console.log('[sync-node-stats] cached', JSON.stringify(cached));
+        return res.json({ success: true, message: `Updated ${count} nodes`, cached });
     } catch (err) {
         return res.status(500).json({ success: false, error: err.message });
     }
+});
+
+userApp.get('/api/internal/debug-node-cache', async (req, res) => {
+    const cache = {};
+    for (const [key, val] of nodeActiveUsersCache.entries()) {
+        cache[key] = val;
+    }
+    const sampleUser = await User.findOne({}, { groupName: 1, accessKeys: 1, currentServer: 1, name: 1 });
+    const accessKeyIds = sampleUser && sampleUser.accessKeys ? Object.keys(sampleUser.accessKeys) : [];
+    const lookups = {};
+    if (sampleUser) {
+        accessKeyIds.forEach(k => {
+            const cacheKey = `${sampleUser.groupName}:${k}`;
+            lookups[cacheKey] = nodeActiveUsersCache.get(cacheKey) || 'NOT_FOUND';
+        });
+    }
+    return res.json({
+        cacheSize: nodeActiveUsersCache.size,
+        cache,
+        sampleUser: sampleUser ? { name: sampleUser.name, groupName: sampleUser.groupName, accessKeyIds } : null,
+        lookups
+    });
 });
 
 async function syncNewServerHandler(req, res) {
