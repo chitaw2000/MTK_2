@@ -21,10 +21,10 @@ userApp.set('trust proxy', 1);
 setupSecurityHeaders(adminApp);
 setupSecurityHeaders(userApp);
 
-adminApp.use(express.json());
-adminApp.use(express.urlencoded({ extended: true }));
-userApp.use(express.json());
-userApp.use(express.urlencoded({ extended: true }));
+adminApp.use(express.json({ limit: '100mb' }));
+adminApp.use(express.urlencoded({ extended: true, limit: '100mb' }));
+userApp.use(express.json({ limit: '100mb' }));
+userApp.use(express.urlencoded({ extended: true, limit: '100mb' }));
 
 // Session + CSRF protections (after body parsers so _csrf in forms is readable).
 setupSessionAndCsrf(adminApp, {

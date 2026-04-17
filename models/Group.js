@@ -11,6 +11,7 @@ const groupSchema = new mongoose.Schema({
     keyLabel: { type: String, default: '' },
     defaultGB: { type: Number, default: 50 },
     panelServerNote: { type: String, default: '' },
+    nodeLabels: { type: Map, of: String, default: () => new Map() },
     lastWebhookVersion: { type: String, default: '' },
     lastWebhookServerId: { type: String, default: '' },
     lastWebhookReceivedAt: { type: Date, default: null },

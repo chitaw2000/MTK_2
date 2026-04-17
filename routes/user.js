@@ -161,14 +161,24 @@ async function fetchExistingUserKeysFallback(user, groupInfo) {
     }
 }
 
-function buildServerLabels(accessKeys, existingLabels) {
+function buildServerLabels(accessKeys, existingLabels, groupNodeLabels) {
     const labels = {};
     const source = (existingLabels && typeof existingLabels === 'object') ? existingLabels : {};
+    const groupLabels = (groupNodeLabels && typeof groupNodeLabels === 'object') ? groupNodeLabels : {};
+    const getGroupLabel = (k) => {
+        if (groupLabels instanceof Map) return groupLabels.get(k) || '';
+        return groupLabels[k] || '';
+    };
     const keys = (accessKeys && typeof accessKeys === 'object') ? Object.keys(accessKeys) : [];
     for (const key of keys) {
         const oldLabel = source[key];
         const cleaned = (oldLabel && String(oldLabel).trim()) ? String(oldLabel).trim() : '';
-        labels[key] = (!cleaned || cleaned === key) ? toDisplayNodeName(key) : cleaned;
+        if (cleaned && cleaned !== key) {
+            labels[key] = cleaned;
+        } else {
+            const gl = String(getGroupLabel(key) || '').trim();
+            labels[key] = (gl && gl !== key) ? gl : toDisplayNodeName(key);
+        }
     }
     return labels;
 }
@@ -220,7 +230,7 @@ async function backfillUserAccessKeysFromGroupTemplates(user, groupInfo) {
     if (!changed) return user;
 
     user.accessKeys = existing;
-    user.serverLabels = buildServerLabels(existing, user.serverLabels);
+    user.serverLabels = buildServerLabels(existing, user.serverLabels, groupInfo && groupInfo.nodeLabels);
     if (!user.currentServer || !existing[user.currentServer]) {
         user.currentServer = Object.keys(existing)[0] || 'None';
     }
@@ -248,7 +258,7 @@ async function refreshUserNodesFromMaster(user, groupInfo) {
     if (!masterKeys) return user;
 
     user.accessKeys = masterKeys;
-    user.serverLabels = buildServerLabels(masterKeys, user.serverLabels);
+    user.serverLabels = buildServerLabels(masterKeys, user.serverLabels, groupInfo && groupInfo.nodeLabels);
     if (!user.currentServer || !masterKeys[user.currentServer]) {
         user.currentServer = Object.keys(masterKeys)[0] || 'None';
     }
@@ -384,8 +394,21 @@ userApp.get('/panel/:token', async (req, res) => {
         // Local-only backfill from group peers (no master API call on panel load).
         try { await backfillUserAccessKeysFromGroupTemplates(user, group); } catch (e) {}
         let nodeLabelMap = {};
+        if (group && group.nodeLabels) {
+            const nl = group.nodeLabels;
+            if (nl instanceof Map) {
+                for (const [k, v] of nl) { if (v) nodeLabelMap[k] = v; }
+            } else if (typeof nl === 'object') {
+                for (const [k, v] of Object.entries(nl)) { if (v) nodeLabelMap[k] = v; }
+            }
+        }
         if (group && group.masterIp && group.masterGroupId) {
-            try { nodeLabelMap = await fetchGroupNodeLabelMap(group); } catch (e) {}
+            try {
+                const fetched = await fetchGroupNodeLabelMap(group);
+                for (const [k, v] of Object.entries(fetched)) {
+                    if (v && !nodeLabelMap[k]) nodeLabelMap[k] = v;
+                }
+            } catch (e) {}
         }
         const domainName = normalizeHost(group && group.nsRecord) || '';
 
@@ -1032,8 +1055,10 @@ userApp.post('/api/internal/sync-node-stats', async (req, res) => {
         }
         let count = 0;
         const cached = {};
+        const labelUpdates = {};
         for (const [nodeId, stats] of Object.entries(nodes)) {
             const activeCount = (typeof stats === 'number') ? stats : (stats && stats.activeUsers != null ? Number(stats.activeUsers) : 0);
+            const displayName = (typeof stats === 'object' && stats !== null && stats.displayName) ? String(stats.displayName).trim() : '';
             const key = `${resolvedLocal}:${nodeId}`;
             nodeActiveUsersCache.set(key, activeCount);
             cached[key] = activeCount;
@@ -1042,7 +1067,30 @@ userApp.post('/api/internal/sync-node-stats', async (req, res) => {
                 nodeActiveUsersCache.set(key2, activeCount);
                 cached[key2] = activeCount;
             }
+            if (displayName) {
+                labelUpdates[`serverLabels.${nodeId}`] = displayName;
+            }
             count++;
+        }
+        if (Object.keys(labelUpdates).length > 0 && resolvedLocal) {
+            try {
+                await User.updateMany(
+                    { groupName: resolvedLocal },
+                    { $set: labelUpdates }
+                );
+                const groupLabelUpdate = {};
+                for (const [k, v] of Object.entries(labelUpdates)) {
+                    groupLabelUpdate[`nodeLabels.${k.replace('serverLabels.', '')}`] = v;
+                }
+                if (masterGroupId) {
+                    await Group.updateOne({ masterGroupId }, { $set: groupLabelUpdate });
+                } else {
+                    await Group.updateOne({ name: resolvedLocal }, { $set: groupLabelUpdate });
+                }
+                console.log('[sync-node-stats] labels updated', Object.keys(labelUpdates).length, 'nodes for group', resolvedLocal);
+            } catch (e) {
+                console.log('[sync-node-stats] label update error', e.message);
+            }
         }
         console.log('[sync-node-stats] cached', JSON.stringify(cached));
         return res.json({ success: true, message: `Updated ${count} nodes`, cached });
@@ -1148,16 +1196,18 @@ async function syncNewServerHandler(req, res) {
             return res.status(400).json({ error: 'groupName does not match masterGroupId mapping' });
         }
         try {
+            const groupUpdate = {
+                lastWebhookVersion: webhookVersion || '',
+                lastWebhookServerId: serverKey || '',
+                lastWebhookReceivedAt: new Date(),
+                lastWebhookEventAt: webhookEventAt || ''
+            };
+            if (serverKey && serverLabel && serverLabel !== serverKey) {
+                groupUpdate[`nodeLabels.${serverKey}`] = serverLabel;
+            }
             await Group.updateOne(
                 { _id: validGroup._id },
-                {
-                    $set: {
-                        lastWebhookVersion: webhookVersion || '',
-                        lastWebhookServerId: serverKey || '',
-                        lastWebhookReceivedAt: new Date(),
-                        lastWebhookEventAt: webhookEventAt || ''
-                    }
-                }
+                { $set: groupUpdate }
             );
         } catch (e) {}
 
@@ -1219,6 +1269,14 @@ async function syncNewServerHandler(req, res) {
             } else {
                 unmatchedCount++;
             }
+        }
+        if (serverKey && serverLabel && serverLabel !== serverKey && validGroup) {
+            try {
+                await User.updateMany(
+                    { groupName: validGroup.name },
+                    { $set: { [`serverLabels.${serverKey}`]: serverLabel } }
+                );
+            } catch (e) {}
         }
         const refreshedSummary = { refreshed: 0, failed: 0 };
         console.log('[sync-new-server] completed', {

@@ -402,13 +402,24 @@ function normalizeHost(value) {
     return withoutScheme.split('/')[0].replace(/:\d+$/, '').trim().replace(/\.$/, '');
 }
 
-function buildServerLabels(accessKeys, existingLabels) {
+function buildServerLabels(accessKeys, existingLabels, groupNodeLabels) {
     const labels = {};
     const source = (existingLabels && typeof existingLabels === 'object') ? existingLabels : {};
+    const groupLabels = (groupNodeLabels && typeof groupNodeLabels === 'object') ? groupNodeLabels : {};
+    const getGroupLabel = (k) => {
+        if (groupLabels instanceof Map) return groupLabels.get(k) || '';
+        return groupLabels[k] || '';
+    };
     const keys = (accessKeys && typeof accessKeys === 'object') ? Object.keys(accessKeys) : [];
     for (const key of keys) {
         const oldLabel = source[key];
-        labels[key] = (oldLabel && String(oldLabel).trim()) ? String(oldLabel).trim() : key;
+        const cleaned = (oldLabel && String(oldLabel).trim()) ? String(oldLabel).trim() : '';
+        if (cleaned && cleaned !== key) {
+            labels[key] = cleaned;
+        } else {
+            const gl = String(getGroupLabel(key) || '').trim();
+            labels[key] = (gl && gl !== key) ? gl : key;
+        }
     }
     return labels;
 }
@@ -518,7 +529,7 @@ async function syncGroupUsersFromMaster(groupInfo, opts = {}) {
             if (masterKeys && typeof masterKeys === 'object' && Object.keys(masterKeys).length > 0) {
                 const updateQuery = {
                     accessKeys: masterKeys,
-                    serverLabels: buildServerLabels(masterKeys, user.serverLabels)
+                    serverLabels: buildServerLabels(masterKeys, user.serverLabels, groupInfo.nodeLabels)
                 };
                 if (!user.currentServer || user.currentServer === 'None' || !masterKeys[user.currentServer]) {
                     updateQuery.currentServer = Object.keys(masterKeys)[0] || 'None';
@@ -579,7 +590,7 @@ async function syncGroupUsersFromMaster(groupInfo, opts = {}) {
                 await User.updateOne({ _id: user._id }, {
                     $set: {
                         accessKeys: existing,
-                        serverLabels: buildServerLabels(existing, user.serverLabels),
+                        serverLabels: buildServerLabels(existing, user.serverLabels, groupInfo.nodeLabels),
                         ...( (!user.currentServer || !existing[user.currentServer]) ? { currentServer: Object.keys(existing)[0] || 'None' } : {} )
                     }
                 });
@@ -2196,7 +2207,7 @@ adminApp.post('/add-user', async (req, res) => {
                 currentServer: defaultServer,
                 expireDate,
                 accessKeys: masterResponse.data.keys,
-                serverLabels: buildServerLabels(masterResponse.data.keys, {}),
+                serverLabels: buildServerLabels(masterResponse.data.keys, {}, groupInfo.nodeLabels),
                 userNo: nextNo 
             });
             res.redirect('/admin/group/' + encodeURIComponent(groupName));
